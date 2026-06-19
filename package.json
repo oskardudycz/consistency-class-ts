@@ -1,0 +1,69 @@
+{
+  "name": "consistency-class",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Exercises for Consistency Class",
+  "scripts": {
+    "setup": "cat .nvmrc | nvm install; nvm use",
+    "build": "tsdown",
+    "build:ts": "tsc",
+    "build:ts:watch": "tsc -b --watch",
+    "start": "tsx --import ./src/index.ts",
+    "lint": "npm run lint:eslint && npm run lint:prettier",
+    "lint:prettier": "prettier --check \"**/**/!(*.d).{ts,json,md}\"",
+    "lint:eslint": "eslint '**/*.ts'",
+    "fix": "run-s fix:eslint fix:prettier",
+    "fix:prettier": "prettier --write \"**/**/!(*.d).{ts,json,md}\"",
+    "fix:eslint": "eslint '**/*.ts' --fix",
+    "test": "run-s test:unit",
+    "test:unit": "vitest run \".unit.spec\"",
+    "test:int": "vitest run \".int.spec\"",
+    "test:e2e": "vitest run \".e2e.spec\"",
+    "test:watch": "vitest",
+    "test:unit:watch": "vitest \".unit.spec\"",
+    "test:int:watch": "vitest \".int.spec\"",
+    "test:e2e:watch": "vitest \".e2e.spec\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oskardudycz/consistency-class-ts.git"
+  },
+  "keywords": [
+    "Event Sourcing"
+  ],
+  "author": "Oskar Dudycz",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/oskardudycz/consistency-class-ts/issues"
+  },
+  "homepage": "https://github.com/oskardudycz/consistency-class-ts#readme",
+  "dependencies": {
+    "@event-driven-io/emmett": "0.43.0-beta.22",
+    "@event-driven-io/emmett-expressjs": "0.43.0-beta.22",
+    "@event-driven-io/emmett-sqlite": "0.43.0-beta.22"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.6.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.0",
+    "@typescript-eslint/parser": "^8.59.0",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "globals": "^17.5.0",
+    "npm-run-all2": "^8.0.4",
+    "prettier": "^3.8.3",
+    "sqlite3": "^6.0.1",
+    "tsconfig-paths": "4.2.0",
+    "tsdown": "^0.21.9",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ]
+}
