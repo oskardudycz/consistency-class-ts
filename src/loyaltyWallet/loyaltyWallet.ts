@@ -1,5 +1,7 @@
 import { type Brand, type Command } from '@event-driven-io/emmett';
 import { randomUUID } from 'node:crypto';
+import type { MemberId } from '../membership';
+import { WalletAccess } from './access';
 import {
   type LoyaltyPoints,
   LoyaltyPointsLimit,
@@ -14,30 +16,37 @@ export type LoyaltyWallet =
 
 export type NotExistingLoyaltyWallet = Readonly<{
   status: 'NotExisting';
+  walletNumber?: never;
 }>;
 
 export type ActiveLoyaltyWallet = Readonly<{
   status: 'Active';
   walletNumber: WalletNumber;
+  ownerId: MemberId;
   pointsLimit: LoyaltyPointsLimit;
   cadence: RedemptionCadence;
+  access: WalletAccess;
 }>;
 
 export type DeactivatedLoyaltyWallet = Readonly<{
   status: 'Deactivated';
   walletNumber: WalletNumber;
+  ownerId: MemberId;
   pointsLimit: LoyaltyPointsLimit;
   cadence: RedemptionCadence;
+  access: WalletAccess;
 }>;
 
 export type ClosedLoyaltyWallet = Readonly<{
   status: 'Closed';
+  walletNumber: WalletNumber;
 }>;
 
 export const LoyaltyWallet = {
   initial: (): NotExistingLoyaltyWallet => ({ status: 'NotExisting' }),
   open: ({
     walletNumber,
+    ownerId,
     cadence,
     earnedPoints,
     redeemedPoints,
@@ -45,7 +54,9 @@ export const LoyaltyWallet = {
   }: OpenLoyaltyWallet['data']): ActiveLoyaltyWallet => ({
     status: 'Active',
     walletNumber,
+    ownerId,
     cadence,
+    access: WalletAccess.of(ownerId),
     pointsLimit: LoyaltyPointsLimit.initial({
       earnedPoints,
       redeemedPoints,
@@ -67,6 +78,8 @@ export type LoyaltyWalletCommand =
   | EarnLoyaltyPoints
   | RedeemLoyaltyPoints
   | SetRedemptionCadence
+  | GrantWalletAccess
+  | RevokeWalletAccess
   | ResetRedemptionWindow
   | DeactivateWallet
   | CloseWallet;
@@ -84,6 +97,10 @@ export const decide = (
       return redeemLoyaltyPoints(command, state);
     case 'SetRedemptionCadence':
       return setRedemptionCadence(command, state);
+    case 'GrantWalletAccess':
+      return grantWalletAccess(command, state);
+    case 'RevokeWalletAccess':
+      return revokeWalletAccess(command, state);
     case 'ResetRedemptionWindow':
       return resetRedemptionWindow(state);
     case 'DeactivateWallet':
@@ -97,6 +114,7 @@ export type OpenLoyaltyWallet = Command<
   'OpenLoyaltyWallet',
   {
     walletNumber: WalletNumber;
+    ownerId: MemberId;
     earnedPoints?: LoyaltyPoints;
     redeemedPoints?: LoyaltyPoints;
     maxRedemptionCount: RedemptionLimit;
@@ -136,6 +154,7 @@ export type RedeemLoyaltyPoints = Command<
   'RedeemLoyaltyPoints',
   {
     walletNumber: WalletNumber;
+    memberId: MemberId;
     points: LoyaltyPoints;
   }
 >;
@@ -146,7 +165,9 @@ export const redeemLoyaltyPoints = (
 ): ActiveLoyaltyWallet => {
   const wallet = assertIs(state, 'Active');
 
-  const { points } = command;
+  const { memberId: accessId, points } = command;
+
+  if (!wallet.access.has(accessId)) throw new Error('Not authorized to redeem');
 
   if (wallet.pointsLimit.redemptionsLeft <= 0)
     throw new Error('Redemption window exhausted');
@@ -179,6 +200,46 @@ export const setRedemptionCadence = (
   return {
     ...wallet,
     cadence,
+  };
+};
+
+export type GrantWalletAccess = Command<
+  'GrantWalletAccess',
+  {
+    walletNumber: WalletNumber;
+    memberId: MemberId;
+  }
+>;
+
+export const grantWalletAccess = (
+  command: GrantWalletAccess['data'],
+  state: LoyaltyWallet,
+): ActiveLoyaltyWallet => {
+  const wallet = assertIs(state, 'Active');
+
+  return {
+    ...wallet,
+    access: wallet.access.add(command.memberId),
+  };
+};
+
+export type RevokeWalletAccess = Command<
+  'RevokeWalletAccess',
+  {
+    walletNumber: WalletNumber;
+    memberId: MemberId;
+  }
+>;
+
+export const revokeWalletAccess = (
+  command: RevokeWalletAccess['data'],
+  state: LoyaltyWallet,
+): ActiveLoyaltyWallet => {
+  const wallet = assertIs(state, 'Active');
+
+  return {
+    ...wallet,
+    access: wallet.access.revoke(command.memberId),
   };
 };
 
@@ -233,6 +294,7 @@ export const closeWallet = (state: LoyaltyWallet): ClosedLoyaltyWallet => {
 
   return {
     status: 'Closed',
+    walletNumber: state.walletNumber,
   };
 };
 

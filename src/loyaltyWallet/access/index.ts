@@ -1,0 +1,1 @@
+export { WalletAccess } from './memberAccess';

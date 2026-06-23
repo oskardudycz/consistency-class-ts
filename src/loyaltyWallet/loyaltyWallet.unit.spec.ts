@@ -8,20 +8,26 @@ import {
   deactivateWallet,
   decide,
   earnLoyaltyPoints,
+  grantWalletAccess,
   LoyaltyWallet,
   openLoyaltyWallet,
   redeemLoyaltyPoints,
   resetRedemptionWindow,
+  revokeWalletAccess,
   setRedemptionCadence,
   WalletNumber,
 } from './loyaltyWallet';
+import { MemberId } from '../membership';
 
 describe('LoyaltyWallet', () => {
   const walletNumber = WalletNumber.random();
+  const owner = MemberId.random();
+  const familyMember = MemberId.random();
 
   const openWallet = (): ActiveLoyaltyWallet =>
     LoyaltyWallet.open({
       walletNumber,
+      ownerId: owner,
       cadence: 'Weekly',
       maxRedemptionCount: RedemptionLimit.of(5),
     });
@@ -41,6 +47,7 @@ describe('LoyaltyWallet', () => {
       const newState = openLoyaltyWallet(
         {
           walletNumber,
+          ownerId: owner,
           cadence: 'Weekly',
           maxRedemptionCount: RedemptionLimit.of(5),
         },
@@ -50,9 +57,11 @@ describe('LoyaltyWallet', () => {
       // then
       assertActive(newState);
       expect(newState.walletNumber).toBe(walletNumber);
+      expect(newState.ownerId).toBe(owner);
       expect(newState.cadence).toBe('Weekly');
       expect(newState.pointsLimit.availablePoints).toBe(0);
       expect(newState.pointsLimit.redemptionsLeft).toBe(5);
+      expect(newState.access.has(owner)).toBe(true);
     });
 
     test('Leaves an already active wallet unchanged', () => {
@@ -63,6 +72,7 @@ describe('LoyaltyWallet', () => {
       const newState = openLoyaltyWallet(
         {
           walletNumber,
+          ownerId: owner,
           cadence: 'Monthly',
           maxRedemptionCount: RedemptionLimit.of(3),
         },
@@ -81,6 +91,7 @@ describe('LoyaltyWallet', () => {
       const newState = openLoyaltyWallet(
         {
           walletNumber,
+          ownerId: owner,
           cadence: 'Weekly',
           maxRedemptionCount: RedemptionLimit.of(5),
         },
@@ -99,6 +110,7 @@ describe('LoyaltyWallet', () => {
       const newState = openLoyaltyWallet(
         {
           walletNumber,
+          ownerId: owner,
           cadence: 'Weekly',
           maxRedemptionCount: RedemptionLimit.of(5),
         },
@@ -159,7 +171,7 @@ describe('LoyaltyWallet', () => {
     test('Redeems points on an active wallet', () => {
       // when
       const newState = redeemLoyaltyPoints(
-        { walletNumber, points: LoyaltyPoints.of(40) },
+        { walletNumber, memberId: owner, points: LoyaltyPoints.of(40) },
         walletWithPoints(100),
       );
 
@@ -172,7 +184,7 @@ describe('LoyaltyWallet', () => {
     test('Cant redeem more points than available', () => {
       expect(() =>
         redeemLoyaltyPoints(
-          { walletNumber, points: LoyaltyPoints.of(50) },
+          { walletNumber, memberId: owner, points: LoyaltyPoints.of(50) },
           walletWithPoints(20),
         ),
       ).toThrow('Not enough points to redeem');
@@ -181,7 +193,7 @@ describe('LoyaltyWallet', () => {
     test('Cant redeem points if wallet does not exist', () => {
       expect(() =>
         redeemLoyaltyPoints(
-          { walletNumber, points: LoyaltyPoints.of(40) },
+          { walletNumber, memberId: owner, points: LoyaltyPoints.of(40) },
           LoyaltyWallet.initial(),
         ),
       ).toThrow("Wallet doesn't exist");
@@ -192,7 +204,7 @@ describe('LoyaltyWallet', () => {
 
       expect(() =>
         redeemLoyaltyPoints(
-          { walletNumber, points: LoyaltyPoints.of(40) },
+          { walletNumber, memberId: owner, points: LoyaltyPoints.of(40) },
           deactivatedWallet,
         ),
       ).toThrow('Wallet is not active');
@@ -203,7 +215,7 @@ describe('LoyaltyWallet', () => {
 
       expect(() =>
         redeemLoyaltyPoints(
-          { walletNumber, points: LoyaltyPoints.of(40) },
+          { walletNumber, memberId: owner, points: LoyaltyPoints.of(40) },
           closedWallet,
         ),
       ).toThrow('Wallet is closed');
@@ -233,11 +245,101 @@ describe('LoyaltyWallet', () => {
     });
   });
 
+  describe('Wallet access', () => {
+    test('Owner can redeem from the shared balance', () => {
+      const newState = redeemLoyaltyPoints(
+        { walletNumber, memberId: owner, points: LoyaltyPoints.of(40) },
+        walletWithPoints(100),
+      );
+
+      assertActive(newState);
+      expect(newState.pointsLimit.availablePoints).toBe(60);
+    });
+
+    test('A granted family member can redeem from the shared balance', () => {
+      // given
+      const shared = grantWalletAccess(
+        { walletNumber, memberId: familyMember },
+        walletWithPoints(100),
+      );
+
+      // when
+      const newState = redeemLoyaltyPoints(
+        { walletNumber, memberId: familyMember, points: LoyaltyPoints.of(40) },
+        shared,
+      );
+
+      // then
+      assertActive(newState);
+      expect(newState.pointsLimit.availablePoints).toBe(60);
+    });
+
+    test('Cant redeem without access', () => {
+      expect(() =>
+        redeemLoyaltyPoints(
+          {
+            walletNumber,
+            memberId: familyMember,
+            points: LoyaltyPoints.of(40),
+          },
+          walletWithPoints(100),
+        ),
+      ).toThrow('Not authorized to redeem');
+    });
+
+    test('Cant redeem after access is revoked', () => {
+      // given
+      const shared = grantWalletAccess(
+        { walletNumber, memberId: familyMember },
+        walletWithPoints(100),
+      );
+      // and
+      const revoked = revokeWalletAccess(
+        { walletNumber, memberId: familyMember },
+        shared,
+      );
+
+      // then
+      expect(() =>
+        redeemLoyaltyPoints(
+          {
+            walletNumber,
+            memberId: familyMember,
+            points: LoyaltyPoints.of(40),
+          },
+          revoked,
+        ),
+      ).toThrow('Not authorized to redeem');
+    });
+
+    test('Cant grant access if wallet is not active', () => {
+      const deactivatedWallet = deactivateWallet(openWallet());
+
+      expect(() =>
+        grantWalletAccess(
+          { walletNumber, memberId: familyMember },
+          deactivatedWallet,
+        ),
+      ).toThrow('Wallet is not active');
+    });
+
+    test('Cant revoke access if wallet is not active', () => {
+      const deactivatedWallet = deactivateWallet(openWallet());
+
+      expect(() =>
+        revokeWalletAccess(
+          { walletNumber, memberId: familyMember },
+          deactivatedWallet,
+        ),
+      ).toThrow('Wallet is not active');
+    });
+  });
+
   describe('Resetting the redemption window', () => {
     test('Resets the redeem count while keeping the balance', () => {
       // given
       const walletAfterRedeem = redeemLoyaltyPoints(
-        { walletNumber, points: LoyaltyPoints.of(10) },
+        { walletNumber, memberId: owner, points: LoyaltyPoints.of(10) },
         walletWithPoints(100),
       );
       expect(walletAfterRedeem.pointsLimit.redemptionsLeft).toBe(4);
@@ -264,7 +366,7 @@ describe('LoyaltyWallet', () => {
     test('Deactivates an active wallet keeping its data', () => {
       // given
       const walletAfterRedeem = redeemLoyaltyPoints(
-        { walletNumber, points: LoyaltyPoints.of(10) },
+        { walletNumber, memberId: owner, points: LoyaltyPoints.of(10) },
         walletWithPoints(100),
       );
 
@@ -347,6 +449,7 @@ describe('LoyaltyWallet', () => {
           type: 'OpenLoyaltyWallet',
           data: {
             walletNumber,
+            ownerId: owner,
             cadence: 'Weekly',
             maxRedemptionCount: RedemptionLimit.of(5),
           },
@@ -375,7 +478,7 @@ describe('LoyaltyWallet', () => {
       const newState = decide(
         {
           type: 'RedeemLoyaltyPoints',
-          data: { walletNumber, points: LoyaltyPoints.of(40) },
+          data: { walletNumber, memberId: owner, points: LoyaltyPoints.of(40) },
         },
         walletWithPoints(100),
       );
@@ -399,7 +502,7 @@ describe('LoyaltyWallet', () => {
 
     test('Routes ResetRedemptionWindow', () => {
       const walletAfterRedeem = redeemLoyaltyPoints(
-        { walletNumber, points: LoyaltyPoints.of(10) },
+        { walletNumber, memberId: owner, points: LoyaltyPoints.of(10) },
         walletWithPoints(100),
       );
 
@@ -428,6 +531,37 @@ describe('LoyaltyWallet', () => {
       );
 
       assertClosed(newState);
+    });
+
+    test('Routes GrantWalletAccess', () => {
+      const newState = decide(
+        {
+          type: 'GrantWalletAccess',
+          data: { walletNumber, memberId: familyMember },
+        },
+        openWallet(),
+      );
+
+      assertActive(newState);
+      expect(newState.access.has(familyMember)).toBe(true);
+    });
+
+    test('Routes RevokeWalletAccess', () => {
+      const shared = grantWalletAccess(
+        { walletNumber, memberId: familyMember },
+        openWallet(),
+      );
+
+      const newState = decide(
+        {
+          type: 'RevokeWalletAccess',
+          data: { walletNumber, memberId: familyMember },
+        },
+        shared,
+      );
+
+      assertActive(newState);
+      expect(newState.access.has(familyMember)).toBe(false);
     });
   });
 });
