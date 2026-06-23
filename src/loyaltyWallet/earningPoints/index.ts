@@ -1,3 +1,4 @@
+export { earnLoyaltyPointsHandler } from './earnLoyaltyPoints';
 export {
   Money,
   type Channel,

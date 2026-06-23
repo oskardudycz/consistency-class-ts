@@ -16,5 +16,29 @@ export {
   type CloseWallet,
 } from './loyaltyWallet';
 export { LoyaltyPoints, RedemptionLimit } from './loyaltyPoints';
-export { WalletAccess } from './access';
-export { type PurchaseRecorded } from './earningPoints';
+export {
+  loyaltyWalletStore,
+  type GetLoyaltyWallet,
+  type FindLoyaltyWalletsByOwners,
+  type SaveLoyaltyWallet,
+  type SaveLoyaltyWallets,
+} from './loyaltyWalletStore';
+export {
+  WalletAccess,
+  grantWalletAccessHandler,
+  revokeWalletAccessHandler,
+} from './access';
+export {
+  earnLoyaltyPointsHandler,
+  type PurchaseRecorded,
+} from './earningPoints';
+export {
+  openLoyaltyWalletHandler,
+  openWalletOnMemberVerified,
+} from './openingWallet';
+export {
+  redeemLoyaltyPointsHandler,
+  setRedemptionCadenceHandler,
+  resetRedemptionWindowHandler,
+} from './redeemingPoints';
+export { deactivateWalletHandler, closeWalletHandler } from './walletLifecycle';
