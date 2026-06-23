@@ -14,3 +14,4 @@ export {
   type CloseWallet,
 } from './loyaltyWallet';
 export { LoyaltyPoints, RedemptionLimit } from './loyaltyPoints';
+export { type PurchaseRecorded } from './earningPoints';
