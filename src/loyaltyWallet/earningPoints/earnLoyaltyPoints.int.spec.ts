@@ -17,11 +17,7 @@ import {
   type ActiveLoyaltyWallet,
   type DeactivatedLoyaltyWallet,
 } from '../loyaltyWallet';
-import {
-  loyaltyWalletStore,
-  walletCollection,
-  type WalletDocument,
-} from '../loyaltyWalletStore';
+import { loyaltyWalletStore } from '../loyaltyWalletStore';
 import { openWalletOnMemberVerified } from '../openingWallet';
 import { deactivateWalletHandler } from '../walletLifecycle';
 import { earnLoyaltyPointsHandler } from './earnLoyaltyPoints';
@@ -33,7 +29,6 @@ describe('Earning loyalty points from a purchase', () => {
   const OPERATOR = MemberId.random();
 
   let client: PongoClient;
-  let wallets: PongoCollection<WalletDocument>;
   let members: PongoCollection<Member>;
   let store: ReturnType<typeof loyaltyWalletStore>;
   let tierOf: ReturnType<typeof getMemberTier>;
@@ -45,9 +40,8 @@ describe('Earning loyalty points from a purchase', () => {
     });
     await client.connect();
     const db = client.db();
-    wallets = walletCollection(db);
     members = db.collection<Member>('members');
-    store = loyaltyWalletStore(wallets);
+    store = loyaltyWalletStore(client);
     tierOf = getMemberTier(members);
   });
 

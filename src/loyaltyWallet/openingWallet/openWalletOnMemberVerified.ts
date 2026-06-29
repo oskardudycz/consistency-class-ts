@@ -13,10 +13,10 @@ export const openWalletOnMemberVerified = async (
   const { cadence, maxRedemptionCount } = tierProgram(data.tier);
   const walletNumber = WalletNumber.random();
 
-  await saveLoyaltyWallet(
-    openLoyaltyWallet(
-      { walletNumber, ownerId: data.memberId, cadence, maxRedemptionCount },
-      LoyaltyWallet.initial(),
-    ),
+  const [state, ...events] = openLoyaltyWallet(
+    { walletNumber, ownerId: data.memberId, cadence, maxRedemptionCount },
+    LoyaltyWallet.initial(),
   );
+
+  await saveLoyaltyWallet(state, events);
 };

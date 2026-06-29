@@ -14,17 +14,14 @@ import {
   type Tier,
 } from '../../membership';
 import { grantWalletAccessHandler, revokeWalletAccessHandler } from '../access';
+import { activityReportCollection } from '../activityReport';
 import { LoyaltyPoints, RedemptionLimit } from '../loyaltyPoints';
 import {
   type ActiveLoyaltyWallet,
   earnLoyaltyPoints,
   WalletNumber,
 } from '../loyaltyWallet';
-import {
-  loyaltyWalletStore,
-  walletCollection,
-  type WalletDocument,
-} from '../loyaltyWalletStore';
+import { loyaltyWalletStore } from '../loyaltyWalletStore';
 import {
   openLoyaltyWalletHandler,
   openWalletOnMemberVerified,
@@ -35,9 +32,9 @@ import { resetRedemptionWindowHandler } from './resetRedemptionWindow';
 describe('Redeeming loyalty points', () => {
   const OSKAR = MemberId.random();
   const KUBA = MemberId.random();
+  const at = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
 
   let client: PongoClient;
-  let wallets: PongoCollection<WalletDocument>;
   let members: PongoCollection<Member>;
   let store: ReturnType<typeof loyaltyWalletStore>;
   let tierOf: ReturnType<typeof getMemberTier>;
@@ -49,9 +46,8 @@ describe('Redeeming loyalty points', () => {
     });
     await client.connect();
     const db = client.db();
-    wallets = walletCollection(db);
     members = db.collection<Member>('members');
-    store = loyaltyWalletStore(wallets);
+    store = loyaltyWalletStore(client);
     tierOf = getMemberTier(members);
   });
 
@@ -79,12 +75,11 @@ describe('Redeeming loyalty points', () => {
 
   const earn = async (walletNumber: WalletNumber, points: number) => {
     const wallet = await store.getLoyaltyWallet(walletNumber);
-    await store.saveLoyaltyWallet(
-      earnLoyaltyPoints(
-        { walletNumber, points: LoyaltyPoints.of(points) },
-        wallet,
-      ),
+    const [state, ...events] = earnLoyaltyPoints(
+      { walletNumber, points: LoyaltyPoints.of(points), at },
+      wallet,
     );
+    await store.saveLoyaltyWallet(state, events);
   };
 
   const redeem = (
@@ -100,7 +95,7 @@ describe('Redeeming loyalty points', () => {
       },
       {
         type: 'RedeemLoyaltyPoints',
-        data: { walletNumber, memberId, points: LoyaltyPoints.of(points) },
+        data: { walletNumber, memberId, points: LoyaltyPoints.of(points), at },
       },
     );
 
@@ -136,7 +131,7 @@ describe('Redeeming loyalty points', () => {
       },
       {
         type: 'ResetRedemptionWindow',
-        data: { walletNumber },
+        data: { walletNumber, at },
       },
     );
 
@@ -176,9 +171,16 @@ describe('Redeeming loyalty points', () => {
     // when
     await redeem(walletNumber, OSKAR, 100);
 
-    // then
+    // then only the burned amount leaves the balance
     const wallet = await activeWallet(walletNumber);
     expect(wallet.pointsLimit.availablePoints).toBe(5);
+
+    // and the activity report keeps both the redeemed and the burned amounts
+    const report = await activityReportCollection(client.db()).findOne({
+      _id: walletNumber,
+    });
+    expect(report?.currentWindow.redeemed).toBe(100);
+    expect(report?.currentWindow.burned).toBe(95);
   });
 
   test('Cant redeem more than available', async () => {

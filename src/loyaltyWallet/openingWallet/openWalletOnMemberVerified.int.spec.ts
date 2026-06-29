@@ -1,25 +1,16 @@
 import { InMemorySQLiteDatabase } from '@event-driven-io/dumbo/sqlite3';
-import {
-  type PongoClient,
-  type PongoCollection,
-  pongoClient,
-} from '@event-driven-io/pongo';
+import { type PongoClient, pongoClient } from '@event-driven-io/pongo';
 import { sqlite3Driver } from '@event-driven-io/pongo/sqlite3';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { MemberId } from '../../membership';
 import { type ActiveLoyaltyWallet } from '../loyaltyWallet';
-import {
-  loyaltyWalletStore,
-  walletCollection,
-  type WalletDocument,
-} from '../loyaltyWalletStore';
+import { loyaltyWalletStore } from '../loyaltyWalletStore';
 import { openWalletOnMemberVerified } from './openWalletOnMemberVerified';
 
 describe('Opening a wallet when a member is verified', () => {
   const OSKAR = MemberId.random();
 
   let client: PongoClient;
-  let wallets: PongoCollection<WalletDocument>;
   let store: ReturnType<typeof loyaltyWalletStore>;
 
   beforeEach(async () => {
@@ -28,8 +19,7 @@ describe('Opening a wallet when a member is verified', () => {
       connectionString: InMemorySQLiteDatabase,
     });
     await client.connect();
-    wallets = walletCollection(client.db());
-    store = loyaltyWalletStore(wallets);
+    store = loyaltyWalletStore(client);
   });
 
   afterEach(async () => {

@@ -1,4 +1,4 @@
-import { type Brand, type Command } from '@event-driven-io/emmett';
+import { type Brand, type Command, type Event } from '@event-driven-io/emmett';
 import { randomUUID } from 'node:crypto';
 import type { MemberId } from '../membership';
 import { WalletAccess } from './access';
@@ -73,6 +73,58 @@ export const WalletNumber = {
 
 export type RedemptionCadence = 'Weekly' | 'Monthly';
 
+export type LoyaltyWalletOpened = Event<
+  'LoyaltyWalletOpened',
+  {
+    walletNumber: WalletNumber;
+    ownerId: MemberId;
+    cadence: RedemptionCadence;
+    maxRedemptionCount: RedemptionLimit;
+    earnedPoints: LoyaltyPoints;
+    redeemedPoints: LoyaltyPoints;
+  }
+>;
+
+export type LoyaltyPointsEarned = Event<
+  'LoyaltyPointsEarned',
+  {
+    walletNumber: WalletNumber;
+    ownerId: MemberId;
+    points: LoyaltyPoints;
+    at: Date;
+  }
+>;
+
+export type LoyaltyPointsRedeemed = Event<
+  'LoyaltyPointsRedeemed',
+  {
+    walletNumber: WalletNumber;
+    ownerId: MemberId;
+    byMemberId: MemberId;
+    /** Points requested to redeem */
+    points: LoyaltyPoints;
+    /** Points actually redeemed, based on policy.
+     * Undefined if no policy was applied */
+    burned?: LoyaltyPoints;
+    at: Date;
+  }
+>;
+
+export type RedemptionWindowReset = Event<
+  'RedemptionWindowReset',
+  {
+    walletNumber: WalletNumber;
+    ownerId: MemberId;
+    at: Date;
+  }
+>;
+
+export type LoyaltyWalletEvent =
+  | LoyaltyWalletOpened
+  | LoyaltyPointsEarned
+  | LoyaltyPointsRedeemed
+  | RedemptionWindowReset;
+
 export type LoyaltyWalletCommand =
   | OpenLoyaltyWallet
   | EarnLoyaltyPoints
@@ -87,7 +139,7 @@ export type LoyaltyWalletCommand =
 export const decide = (
   { type: commandType, data: command }: LoyaltyWalletCommand,
   state: LoyaltyWallet,
-): LoyaltyWallet => {
+): [LoyaltyWallet, ...LoyaltyWalletEvent[]] => {
   switch (commandType) {
     case 'OpenLoyaltyWallet':
       return openLoyaltyWallet(command, state);
@@ -96,17 +148,17 @@ export const decide = (
     case 'RedeemLoyaltyPoints':
       return redeemLoyaltyPoints(command, state);
     case 'SetRedemptionCadence':
-      return setRedemptionCadence(command, state);
+      return [setRedemptionCadence(command, state)];
     case 'GrantWalletAccess':
-      return grantWalletAccess(command, state);
+      return [grantWalletAccess(command, state)];
     case 'RevokeWalletAccess':
-      return revokeWalletAccess(command, state);
+      return [revokeWalletAccess(command, state)];
     case 'ResetRedemptionWindow':
-      return resetRedemptionWindow(state);
+      return resetRedemptionWindow(command, state);
     case 'DeactivateWallet':
-      return deactivateWallet(state);
+      return [deactivateWallet(state)];
     case 'CloseWallet':
-      return closeWallet(state);
+      return [closeWallet(state)];
   }
 };
 
@@ -125,29 +177,59 @@ export type OpenLoyaltyWallet = Command<
 export const openLoyaltyWallet = (
   command: OpenLoyaltyWallet['data'],
   state: LoyaltyWallet,
-): LoyaltyWallet =>
-  state.status === 'NotExisting' ? LoyaltyWallet.open(command) : state;
+): [LoyaltyWallet, ...LoyaltyWalletEvent[]] => {
+  if (state.status !== 'NotExisting') return [state];
+
+  const wallet = LoyaltyWallet.open(command);
+
+  return [
+    wallet,
+    {
+      type: 'LoyaltyWalletOpened',
+      data: {
+        walletNumber: wallet.walletNumber,
+        ownerId: wallet.ownerId,
+        cadence: wallet.cadence,
+        maxRedemptionCount: wallet.pointsLimit.maxRedemptionCount,
+        earnedPoints: wallet.pointsLimit.earnedPoints,
+        redeemedPoints: wallet.pointsLimit.redeemedPoints,
+      },
+    },
+  ];
+};
 
 export type EarnLoyaltyPoints = Command<
   'EarnLoyaltyPoints',
   {
     walletNumber: WalletNumber;
     points: LoyaltyPoints;
+    at: Date;
   }
 >;
 
 export const earnLoyaltyPoints = (
   command: EarnLoyaltyPoints['data'],
   state: LoyaltyWallet,
-): ActiveLoyaltyWallet => {
+): [ActiveLoyaltyWallet, LoyaltyPointsEarned] => {
   const wallet = assertIs(state, 'Active');
 
-  const { points } = command;
+  const { points, at } = command;
 
-  return {
-    ...wallet,
-    pointsLimit: wallet.pointsLimit.earn(points),
-  };
+  return [
+    {
+      ...wallet,
+      pointsLimit: wallet.pointsLimit.earn(points),
+    },
+    {
+      type: 'LoyaltyPointsEarned',
+      data: {
+        walletNumber: wallet.walletNumber,
+        ownerId: wallet.ownerId,
+        points,
+        at,
+      },
+    },
+  ];
 };
 
 export type RedeemLoyaltyPoints = Command<
@@ -155,30 +237,48 @@ export type RedeemLoyaltyPoints = Command<
   {
     walletNumber: WalletNumber;
     memberId: MemberId;
+    /** Points requested to redeem */
     points: LoyaltyPoints;
+    /** Points actually redeemed, based on policy.
+     * Undefined if no policy was applied */
+    burned?: LoyaltyPoints;
+    at: Date;
   }
 >;
 
 export const redeemLoyaltyPoints = (
   command: RedeemLoyaltyPoints['data'],
   state: LoyaltyWallet,
-): ActiveLoyaltyWallet => {
+): [ActiveLoyaltyWallet, LoyaltyPointsRedeemed] => {
   const wallet = assertIs(state, 'Active');
 
-  const { memberId: accessId, points } = command;
+  const { memberId: accessId, points, at, burned = points } = command;
 
   if (!wallet.access.has(accessId)) throw new Error('Not authorized to redeem');
 
   if (wallet.pointsLimit.redemptionsLeft <= 0)
     throw new Error('Redemption window exhausted');
 
-  if (wallet.pointsLimit.availablePoints < points)
+  if (wallet.pointsLimit.availablePoints < burned)
     throw new Error('Not enough points to redeem');
 
-  return {
-    ...wallet,
-    pointsLimit: wallet.pointsLimit.redeem(points),
-  };
+  return [
+    {
+      ...wallet,
+      pointsLimit: wallet.pointsLimit.redeem(burned),
+    },
+    {
+      type: 'LoyaltyPointsRedeemed',
+      data: {
+        walletNumber: wallet.walletNumber,
+        ownerId: wallet.ownerId,
+        byMemberId: accessId,
+        points,
+        burned,
+        at,
+      },
+    },
+  ];
 };
 
 export type SetRedemptionCadence = Command<
@@ -247,18 +347,30 @@ export type ResetRedemptionWindow = Command<
   'ResetRedemptionWindow',
   {
     walletNumber: WalletNumber;
+    at: Date;
   }
 >;
 
 export const resetRedemptionWindow = (
+  command: ResetRedemptionWindow['data'],
   state: LoyaltyWallet,
-): ActiveLoyaltyWallet => {
+): [ActiveLoyaltyWallet, RedemptionWindowReset] => {
   const wallet = assertIs(state, 'Active');
 
-  return {
-    ...wallet,
-    pointsLimit: wallet.pointsLimit.resetRedemptionCount(),
-  };
+  return [
+    {
+      ...wallet,
+      pointsLimit: wallet.pointsLimit.resetRedemptionCount(),
+    },
+    {
+      type: 'RedemptionWindowReset',
+      data: {
+        walletNumber: wallet.walletNumber,
+        ownerId: wallet.ownerId,
+        at: command.at,
+      },
+    },
+  ];
 };
 
 export type DeactivateWallet = Command<

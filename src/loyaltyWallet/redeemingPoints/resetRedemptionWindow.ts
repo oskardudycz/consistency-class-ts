@@ -19,5 +19,7 @@ export const resetRedemptionWindowHandler = async (
 ) => {
   const wallet = await getLoyaltyWallet(command.walletNumber);
 
-  await saveLoyaltyWallet(resetRedemptionWindow(wallet));
+  const [state, ...events] = resetRedemptionWindow(command, wallet);
+
+  await saveLoyaltyWallet(state, events);
 };

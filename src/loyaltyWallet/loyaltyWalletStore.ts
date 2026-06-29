@@ -1,10 +1,14 @@
 import {
+  type PongoClient,
   type PongoCollection,
   type PongoDb,
   type PongoFilter,
+  type PongoSession,
 } from '@event-driven-io/pongo';
+import { applyProjections } from '../core';
 import { type MemberId } from '../membership';
 import { WalletAccess } from './access';
+import { activityReportProjection } from './activityReport';
 import {
   type LoyaltyPoints,
   LoyaltyPointsLimit,
@@ -12,9 +16,11 @@ import {
 } from './loyaltyPoints';
 import {
   LoyaltyWallet,
+  type LoyaltyWalletEvent,
   type RedemptionCadence,
   type WalletNumber,
 } from './loyaltyWallet';
+import { monthlySummaryProjection } from './monthlySummary';
 
 export type GetLoyaltyWallet = (
   walletNumber: WalletNumber,
@@ -24,9 +30,19 @@ export type FindLoyaltyWalletsByOwners = (
   ownerIds: MemberId[],
 ) => Promise<LoyaltyWallet[]>;
 
-export type SaveLoyaltyWallet = (wallet: LoyaltyWallet) => Promise<void>;
+export type LoyaltyWalletUpdate = {
+  state: LoyaltyWallet;
+  events: LoyaltyWalletEvent[];
+};
 
-export type SaveLoyaltyWallets = (wallets: LoyaltyWallet[]) => Promise<void>;
+export type SaveLoyaltyWallet = (
+  state: LoyaltyWallet,
+  events?: LoyaltyWalletEvent[],
+) => Promise<void>;
+
+export type SaveLoyaltyWallets = (
+  updates: LoyaltyWalletUpdate[],
+) => Promise<void>;
 
 type WalletPoints = {
   earnedPoints: LoyaltyPoints;
@@ -102,33 +118,63 @@ export const walletCollection = (
 ): PongoCollection<WalletDocument> => db.collection<WalletDocument>('wallets');
 
 export const loyaltyWalletStore = (
-  wallets: PongoCollection<WalletDocument>,
+  client: PongoClient,
 ): Readonly<{
   getLoyaltyWallet: GetLoyaltyWallet;
   findLoyaltyWalletsByOwners: FindLoyaltyWalletsByOwners;
   saveLoyaltyWallet: SaveLoyaltyWallet;
   saveLoyaltyWallets: SaveLoyaltyWallets;
-}> => ({
-  getLoyaltyWallet: async (walletNumber) => {
-    const doc = await wallets.findOne({ _id: walletNumber });
-    return doc ? fromDocument(doc) : LoyaltyWallet.initial();
-  },
-  findLoyaltyWalletsByOwners: async (ownerIds) =>
-    (
-      await wallets.find({
-        ownerId: { $in: ownerIds },
-      } as PongoFilter<WalletDocument>)
-    ).map(fromDocument),
-  saveLoyaltyWallet: async (wallet) => {
-    const doc = toDocument(wallet);
-    const existing = (await wallets.countDocuments({ _id: doc._id })) > 0;
+}> => {
+  const db = client.db();
+  const wallets = walletCollection(db);
+  const projections = [activityReportProjection, monthlySummaryProjection];
 
-    if (existing) await wallets.replaceOne({ _id: doc._id }, doc);
-    else await wallets.insertOne(doc);
-  },
-  saveLoyaltyWallets: async (toSave) => {
-    if (toSave.length === 0) return;
+  const saveWalletDocument = async (
+    state: LoyaltyWallet,
+    session: PongoSession,
+  ): Promise<void> => {
+    const doc = toDocument(state);
+    const existing =
+      (await wallets.countDocuments({ _id: doc._id }, { session })) > 0;
 
-    await wallets.replaceMany(toSave.map(toDocument));
-  },
-});
+    if (existing) await wallets.replaceOne({ _id: doc._id }, doc, { session });
+    else await wallets.insertOne(doc, { session });
+  };
+
+  return {
+    getLoyaltyWallet: async (walletNumber) => {
+      const doc = await wallets.findOne({ _id: walletNumber });
+      return doc ? fromDocument(doc) : LoyaltyWallet.initial();
+    },
+    findLoyaltyWalletsByOwners: async (ownerIds) =>
+      (
+        await wallets.find({
+          ownerId: { $in: ownerIds },
+        } as PongoFilter<WalletDocument>)
+      ).map(fromDocument),
+    saveLoyaltyWallet: async (state, events) => {
+      await client.withSession((session) =>
+        session.withTransaction(async () => {
+          await saveWalletDocument(state, session);
+          if (events) await applyProjections(db, projections, events, session);
+        }),
+      );
+    },
+    saveLoyaltyWallets: async (updates) => {
+      if (updates.length === 0) return;
+
+      await client.withSession((session) =>
+        session.withTransaction(async () => {
+          await wallets.replaceMany(
+            updates.map(({ state }) => toDocument(state)),
+            { session },
+          );
+
+          for (const { events } of updates) {
+            await applyProjections(db, projections, events, session);
+          }
+        }),
+      );
+    },
+  };
+};

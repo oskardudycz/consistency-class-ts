@@ -1,27 +1,24 @@
 import { InMemorySQLiteDatabase } from '@event-driven-io/dumbo/sqlite3';
-import {
-  type PongoClient,
-  type PongoCollection,
-  pongoClient,
-} from '@event-driven-io/pongo';
+import { type PongoClient, pongoClient } from '@event-driven-io/pongo';
 import { sqlite3Driver } from '@event-driven-io/pongo/sqlite3';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { MemberId } from '../membership';
+import { activityReportCollection } from './activityReport';
 import { LoyaltyPoints, RedemptionLimit } from './loyaltyPoints';
 import {
   type ActiveLoyaltyWallet,
+  earnLoyaltyPoints,
   LoyaltyWallet,
+  openLoyaltyWallet,
+  redeemLoyaltyPoints,
+  resetRedemptionWindow,
   WalletNumber,
 } from './loyaltyWallet';
-import {
-  loyaltyWalletStore,
-  walletCollection,
-  type WalletDocument,
-} from './loyaltyWalletStore';
+import { loyaltyWalletStore } from './loyaltyWalletStore';
+import { monthlySummaryCollection } from './monthlySummary';
 
 describe('Loyalty wallet store', () => {
   let client: PongoClient;
-  let wallets: PongoCollection<WalletDocument>;
   let store: ReturnType<typeof loyaltyWalletStore>;
 
   beforeEach(async () => {
@@ -30,8 +27,7 @@ describe('Loyalty wallet store', () => {
       connectionString: InMemorySQLiteDatabase,
     });
     await client.connect();
-    wallets = walletCollection(client.db());
-    store = loyaltyWalletStore(wallets);
+    store = loyaltyWalletStore(client);
   });
 
   afterEach(async () => {
@@ -48,7 +44,7 @@ describe('Loyalty wallet store', () => {
 
   const enroll = async (ownerId: MemberId): Promise<ActiveLoyaltyWallet> => {
     const wallet = activeWallet(ownerId);
-    await store.saveLoyaltyWallet(wallet);
+    await store.saveLoyaltyWallet(wallet, []);
     return wallet;
   };
 
@@ -110,10 +106,19 @@ describe('Loyalty wallet store', () => {
 
       // when both are credited in a single batch
       await store.saveLoyaltyWallets([
-        { ...first, pointsLimit: first.pointsLimit.earn(LoyaltyPoints.of(30)) },
         {
-          ...second,
-          pointsLimit: second.pointsLimit.earn(LoyaltyPoints.of(70)),
+          state: {
+            ...first,
+            pointsLimit: first.pointsLimit.earn(LoyaltyPoints.of(30)),
+          },
+          events: [],
+        },
+        {
+          state: {
+            ...second,
+            pointsLimit: second.pointsLimit.earn(LoyaltyPoints.of(70)),
+          },
+          events: [],
         },
       ]);
 
@@ -125,6 +130,77 @@ describe('Loyalty wallet store', () => {
       const byOwner = new Map(reloaded.map((w) => [ownerOf(w), w]));
       expect(balanceOf(byOwner.get(firstOwner)!)).toBe(30);
       expect(balanceOf(byOwner.get(secondOwner)!)).toBe(70);
+    });
+  });
+
+  describe('projections', () => {
+    const at = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
+
+    const save = async (
+      decision: ReturnType<typeof openLoyaltyWallet>,
+    ): Promise<void> => {
+      const [state, ...events] = decision;
+      await store.saveLoyaltyWallet(state, events);
+    };
+
+    test('writes the activity report and monthly summary alongside the wallet', async () => {
+      // given an opened wallet earning and redeeming within one window
+      const owner = MemberId.random();
+      const walletNumber = WalletNumber.random();
+
+      await save(
+        openLoyaltyWallet(
+          {
+            walletNumber,
+            ownerId: owner,
+            cadence: 'Monthly',
+            maxRedemptionCount: RedemptionLimit.of(5),
+          },
+          LoyaltyWallet.initial(),
+        ),
+      );
+
+      const opened = await store.getLoyaltyWallet(walletNumber);
+      await save(
+        earnLoyaltyPoints(
+          { walletNumber, points: LoyaltyPoints.of(100), at },
+          opened,
+        ),
+      );
+
+      const earned = await store.getLoyaltyWallet(walletNumber);
+      await save(
+        redeemLoyaltyPoints(
+          { walletNumber, memberId: owner, points: LoyaltyPoints.of(40), at },
+          earned,
+        ),
+      );
+
+      const redeemed = await store.getLoyaltyWallet(walletNumber);
+      await save(resetRedemptionWindow({ walletNumber, at }, redeemed));
+
+      // then the activity report groups the activity into windows
+      const report = await activityReportCollection(client.db()).findOne({
+        _id: walletNumber,
+      });
+      expect(report?.ownerId).toBe(owner);
+      expect(report?.closedWindows).toHaveLength(1);
+      expect(report?.closedWindows[0].earned).toBe(100);
+      expect(report?.closedWindows[0].redeemed).toBe(40);
+      expect(report?.closedWindows[0].burned).toBe(40);
+      expect(report?.closedWindows[0].redemptionCount).toBe(1);
+      expect(report?.currentWindow.windowNumber).toBe(2);
+      expect(report?.currentWindow.hadActivity).toBe(false);
+
+      // and the monthly summary aggregates the month's totals
+      const summary = await monthlySummaryCollection(client.db()).findOne({
+        _id: `${walletNumber}:2026-06`,
+      });
+      expect(summary?.totalEarned).toBe(100);
+      expect(summary?.totalRedeemed).toBe(40);
+      expect(summary?.totalBurned).toBe(40);
+      expect(summary?.redemptionCount).toBe(1);
+      expect(summary?.windowsClosed).toBe(1);
     });
   });
 });
