@@ -20,7 +20,7 @@ export type AnyProjection = Projection<any, any>;
 export const applyProjections = async (
   db: PongoDb,
   projections: AnyProjection[],
-  events: ReadonlyArray<Event>,
+  events: Event | ReadonlyArray<Event>,
   session: PongoSession,
 ): Promise<void> => {
   for (const projection of projections) {
@@ -34,10 +34,12 @@ export const applyProjection = async <
 >(
   db: PongoDb,
   projection: Projection<Doc, E>,
-  events: ReadonlyArray<Event>,
+  events: Event | ReadonlyArray<Event>,
   session: PongoSession,
 ): Promise<void> => {
   const collection = db.collection<Doc>(projection.collectionName);
+
+  events = Array.isArray(events) ? events : [events];
 
   for (const event of events) {
     if (!projection.canHandle.includes(event.type)) continue;

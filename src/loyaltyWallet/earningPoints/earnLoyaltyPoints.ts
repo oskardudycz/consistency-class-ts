@@ -38,12 +38,21 @@ export const earnLoyaltyPointsHandler = async (
 
     if (!wallet) return [];
 
-    const [state, ...events] = earnLoyaltyPoints(
-      { walletNumber: wallet.walletNumber, points: amount, at: event.data.at },
-      wallet,
-    );
-
-    return [{ state, events }];
+    return [
+      {
+        walletNumber: wallet.walletNumber,
+        events: [
+          earnLoyaltyPoints(
+            {
+              walletNumber: wallet.walletNumber,
+              points: amount,
+              at: event.data.at,
+            },
+            wallet,
+          ),
+        ],
+      },
+    ];
   });
 
   await saveLoyaltyWallets(updates);

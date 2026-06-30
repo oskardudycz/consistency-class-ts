@@ -9,6 +9,7 @@ import {
   type ActiveLoyaltyWallet,
   earnLoyaltyPoints,
   LoyaltyWallet,
+  type LoyaltyWalletEvent,
   openLoyaltyWallet,
   redeemLoyaltyPoints,
   resetRedemptionWindow,
@@ -44,7 +45,7 @@ describe('Loyalty wallet store', () => {
 
   const enroll = async (ownerId: MemberId): Promise<ActiveLoyaltyWallet> => {
     const wallet = activeWallet(ownerId);
-    await store.saveLoyaltyWallet(wallet, []);
+    await store.saveLoyaltyWallet(wallet.walletNumber, []);
     return wallet;
   };
 
@@ -107,17 +108,11 @@ describe('Loyalty wallet store', () => {
       // when both are credited in a single batch
       await store.saveLoyaltyWallets([
         {
-          state: {
-            ...first,
-            pointsLimit: first.pointsLimit.earn(LoyaltyPoints.of(30)),
-          },
+          walletNumber: first.walletNumber,
           events: [],
         },
         {
-          state: {
-            ...second,
-            pointsLimit: second.pointsLimit.earn(LoyaltyPoints.of(70)),
-          },
+          walletNumber: second.walletNumber,
           events: [],
         },
       ]);
@@ -137,11 +132,9 @@ describe('Loyalty wallet store', () => {
     const at = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
 
     const save = async (
-      decision: ReturnType<typeof openLoyaltyWallet>,
-    ): Promise<void> => {
-      const [state, ...events] = decision;
-      await store.saveLoyaltyWallet(state, events);
-    };
+      walletNumber: WalletNumber,
+      events: LoyaltyWalletEvent | LoyaltyWalletEvent[],
+    ): Promise<void> => store.saveLoyaltyWallet(walletNumber, events);
 
     test('writes the activity report and monthly summary alongside the wallet', async () => {
       // given an opened wallet earning and redeeming within one window
@@ -149,6 +142,7 @@ describe('Loyalty wallet store', () => {
       const walletNumber = WalletNumber.random();
 
       await save(
+        walletNumber,
         openLoyaltyWallet(
           {
             walletNumber,
@@ -162,6 +156,7 @@ describe('Loyalty wallet store', () => {
 
       const opened = await store.getLoyaltyWallet(walletNumber);
       await save(
+        walletNumber,
         earnLoyaltyPoints(
           { walletNumber, points: LoyaltyPoints.of(100), at },
           opened,
@@ -170,6 +165,7 @@ describe('Loyalty wallet store', () => {
 
       const earned = await store.getLoyaltyWallet(walletNumber);
       await save(
+        walletNumber,
         redeemLoyaltyPoints(
           { walletNumber, memberId: owner, points: LoyaltyPoints.of(40), at },
           earned,
@@ -177,7 +173,10 @@ describe('Loyalty wallet store', () => {
       );
 
       const redeemed = await store.getLoyaltyWallet(walletNumber);
-      await save(resetRedemptionWindow({ walletNumber, at }, redeemed));
+      await save(
+        walletNumber,
+        resetRedemptionWindow({ walletNumber, at }, redeemed),
+      );
 
       // then the activity report groups the activity into windows
       const report = await activityReportCollection(client.db()).findOne({

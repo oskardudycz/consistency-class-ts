@@ -1,8 +1,8 @@
 import { InMemorySQLiteDatabase } from '@event-driven-io/dumbo/sqlite3';
 import {
   type PongoClient,
-  type PongoCollection,
   pongoClient,
+  type PongoCollection,
 } from '@event-driven-io/pongo';
 import { sqlite3Driver } from '@event-driven-io/pongo/sqlite3';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -75,11 +75,14 @@ describe('Redeeming loyalty points', () => {
 
   const earn = async (walletNumber: WalletNumber, points: number) => {
     const wallet = await store.getLoyaltyWallet(walletNumber);
-    const [state, ...events] = earnLoyaltyPoints(
-      { walletNumber, points: LoyaltyPoints.of(points), at },
-      wallet,
+
+    await store.saveLoyaltyWallet(
+      walletNumber,
+      earnLoyaltyPoints(
+        { walletNumber, points: LoyaltyPoints.of(points), at },
+        wallet,
+      ),
     );
-    await store.saveLoyaltyWallet(state, events);
   };
 
   const redeem = (

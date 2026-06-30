@@ -28,10 +28,8 @@ export const redeemLoyaltyPointsHandler = async (
       ? BenefitPolicy.apply(command.points, await getMemberTier(wallet.ownerId))
       : command.points;
 
-  const [state, ...events] = redeemLoyaltyPoints(
-    { ...command, burned },
-    wallet,
+  return saveLoyaltyWallet(
+    command.walletNumber,
+    redeemLoyaltyPoints({ ...command, burned }, wallet),
   );
-
-  await saveLoyaltyWallet(state, events);
 };
