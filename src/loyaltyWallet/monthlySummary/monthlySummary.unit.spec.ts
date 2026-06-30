@@ -1,4 +1,13 @@
-import { describe, expect, test } from 'vitest';
+import { InMemorySQLiteDatabase } from '@event-driven-io/dumbo/sqlite3';
+import {
+  eventsInStream,
+  expectPongoDocuments,
+  newEventsInStream,
+  type SQLiteProjectionAssert,
+  SQLiteProjectionSpec,
+} from '@event-driven-io/emmett-sqlite';
+import { sqlite3EventStoreDriver } from '@event-driven-io/emmett-sqlite/sqlite3';
+import { beforeAll, beforeEach, describe, it } from 'vitest';
 import { MemberId } from '../../membership';
 import { LoyaltyPoints } from '../loyaltyPoints';
 import {
@@ -7,17 +16,28 @@ import {
   type RedemptionWindowReset,
   WalletNumber,
 } from '../loyaltyWallet';
-import { evolve, type MonthlySummary } from './monthlySummary';
+import {
+  type MonthlySummary,
+  type MonthlySummaryEvent,
+  monthlySummaryProjection,
+} from './monthlySummary';
 
-type MonthlySummaryEvent =
-  | LoyaltyPointsEarned
-  | LoyaltyPointsRedeemed
-  | RedemptionWindowReset;
-
-describe('MonthlySummary projection', () => {
-  const walletNumber = WalletNumber.random();
+void describe('MonthlySummary projection', () => {
+  let given: SQLiteProjectionSpec<MonthlySummaryEvent>;
+  let walletNumber: WalletNumber;
   const owner = MemberId.random();
   const june = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
+  const july = new Date(Date.UTC(2026, 6, 10, 12, 0, 0));
+
+  beforeAll(() => {
+    given = SQLiteProjectionSpec.for({
+      projection: monthlySummaryProjection,
+      driver: sqlite3EventStoreDriver,
+      fileName: InMemorySQLiteDatabase,
+    });
+  });
+
+  beforeEach(() => (walletNumber = WalletNumber.random()));
 
   const earned = (points: number, at: Date): LoyaltyPointsEarned => ({
     type: 'LoyaltyPointsEarned',
@@ -45,41 +65,96 @@ describe('MonthlySummary projection', () => {
     },
   });
 
-  const reset = (at: Date): RedemptionWindowReset => ({
+  const windowReset = (at: Date): RedemptionWindowReset => ({
     type: 'RedemptionWindowReset',
     data: { walletNumber, ownerId: owner, at },
   });
 
-  const fold = (events: MonthlySummaryEvent[]): MonthlySummary =>
-    events.reduce<MonthlySummary | null>(
-      (document, event) => evolve(document, event),
-      null,
-    )!;
+  const summaryShouldBe = (
+    summary: Omit<MonthlySummary, '_id'>,
+  ): SQLiteProjectionAssert => {
+    const id = `${walletNumber}:${summary.month}`;
+    return expectPongoDocuments
+      .fromCollection<MonthlySummary>('monthlySummaries')
+      .withId(id)
+      .toBeEqual({ _id: id, ...summary });
+  };
 
-  test('aggregates earns, redemptions and closed windows for the month', () => {
-    const summary = fold([
-      earned(100, june),
-      redeemed(40, june, 38),
-      redeemed(10, june),
-      reset(june),
-    ]);
+  const allOf =
+    (...asserts: SQLiteProjectionAssert[]): SQLiteProjectionAssert =>
+    async (options) => {
+      for (const assert of asserts) await assert(options);
+    };
 
-    expect(summary.month).toBe('2026-06');
-    expect(summary._id).toBe(`${walletNumber}:2026-06`);
-    expect(summary.ownerId).toBe(owner);
-    expect(summary.totalEarned).toBe(100);
-    expect(summary.totalRedeemed).toBe(50);
-    expect(summary.totalBurned).toBe(48);
-    expect(summary.redemptionCount).toBe(2);
-    expect(summary.windowsClosed).toBe(1);
-  });
+  void it('aggregates earns, redemptions and closed windows for the month', () =>
+    given(
+      eventsInStream(walletNumber, [earned(100, june), redeemed(40, june, 38)]),
+    )
+      .when(
+        newEventsInStream(walletNumber, [
+          redeemed(10, june),
+          windowReset(june),
+        ]),
+      )
+      .then(
+        summaryShouldBe({
+          walletNumber,
+          ownerId: owner,
+          month: '2026-06',
+          totalEarned: 100,
+          totalRedeemed: 50,
+          totalBurned: 48,
+          redemptionCount: 2,
+          windowsClosed: 1,
+        }),
+      ));
 
-  test('initialises the document on a redemption with no prior earn', () => {
-    const summary = fold([redeemed(25, june)]);
+  void it('keeps a separate summary per month', () =>
+    given(eventsInStream(walletNumber, [earned(100, june), redeemed(40, june)]))
+      .when(
+        newEventsInStream(walletNumber, [
+          earned(60, july),
+          redeemed(20, july, 18),
+        ]),
+      )
+      .then(
+        allOf(
+          summaryShouldBe({
+            walletNumber,
+            ownerId: owner,
+            month: '2026-06',
+            totalEarned: 100,
+            totalRedeemed: 40,
+            totalBurned: 40,
+            redemptionCount: 1,
+            windowsClosed: 0,
+          }),
+          summaryShouldBe({
+            walletNumber,
+            ownerId: owner,
+            month: '2026-07',
+            totalEarned: 60,
+            totalRedeemed: 20,
+            totalBurned: 18,
+            redemptionCount: 1,
+            windowsClosed: 0,
+          }),
+        ),
+      ));
 
-    expect(summary.ownerId).toBe(owner);
-    expect(summary.totalEarned).toBe(0);
-    expect(summary.totalRedeemed).toBe(25);
-    expect(summary.redemptionCount).toBe(1);
-  });
+  void it('initialises the document on a redemption with no prior earn', () =>
+    given([])
+      .when(newEventsInStream(walletNumber, [redeemed(25, june)]))
+      .then(
+        summaryShouldBe({
+          walletNumber,
+          ownerId: owner,
+          month: '2026-06',
+          totalEarned: 0,
+          totalRedeemed: 25,
+          totalBurned: 25,
+          redemptionCount: 1,
+          windowsClosed: 0,
+        }),
+      ));
 });

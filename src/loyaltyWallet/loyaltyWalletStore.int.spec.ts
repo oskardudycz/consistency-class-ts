@@ -1,6 +1,4 @@
-import { InMemorySQLiteDatabase } from '@event-driven-io/dumbo/sqlite3';
-import { type PongoClient, pongoClient } from '@event-driven-io/pongo';
-import { sqlite3Driver } from '@event-driven-io/pongo/sqlite3';
+import { type PongoClient } from '@event-driven-io/pongo';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { MemberId } from '../membership';
 import { activityReportCollection } from './activityReport';
@@ -16,37 +14,42 @@ import {
   WalletNumber,
 } from './loyaltyWallet';
 import { loyaltyWalletStore } from './loyaltyWalletStore';
+import { testLoyaltyWalletStore } from './loyaltyWalletStore.testStore';
 import { monthlySummaryCollection } from './monthlySummary';
 
 describe('Loyalty wallet store', () => {
+  const at = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
+
   let client: PongoClient;
   let store: ReturnType<typeof loyaltyWalletStore>;
+  let close: () => Promise<void>;
 
   beforeEach(async () => {
-    client = pongoClient({
-      driver: sqlite3Driver,
-      connectionString: InMemorySQLiteDatabase,
-    });
-    await client.connect();
-    store = loyaltyWalletStore(client);
+    const test = await testLoyaltyWalletStore();
+    store = test.store;
+    client = test.client;
+    close = test.close;
   });
 
   afterEach(async () => {
-    await client.close();
+    await close();
   });
 
-  const activeWallet = (ownerId: MemberId): ActiveLoyaltyWallet =>
-    LoyaltyWallet.open({
-      walletNumber: WalletNumber.random(),
-      ownerId,
-      cadence: 'Monthly',
-      maxRedemptionCount: RedemptionLimit.of(10),
-    });
-
   const enroll = async (ownerId: MemberId): Promise<ActiveLoyaltyWallet> => {
-    const wallet = activeWallet(ownerId);
-    await store.saveLoyaltyWallet(wallet.walletNumber, []);
-    return wallet;
+    const walletNumber = WalletNumber.random();
+    await store.saveLoyaltyWallet(
+      walletNumber,
+      openLoyaltyWallet(
+        {
+          walletNumber,
+          ownerId,
+          cadence: 'Monthly',
+          maxRedemptionCount: RedemptionLimit.of(10),
+        },
+        LoyaltyWallet.initial(),
+      ),
+    );
+    return (await store.getLoyaltyWallet(walletNumber)) as ActiveLoyaltyWallet;
   };
 
   const ownerOf = (wallet: LoyaltyWallet): MemberId =>
@@ -109,11 +112,29 @@ describe('Loyalty wallet store', () => {
       await store.saveLoyaltyWallets([
         {
           walletNumber: first.walletNumber,
-          events: [],
+          events: [
+            earnLoyaltyPoints(
+              {
+                walletNumber: first.walletNumber,
+                points: LoyaltyPoints.of(30),
+                at,
+              },
+              first,
+            ),
+          ],
         },
         {
           walletNumber: second.walletNumber,
-          events: [],
+          events: [
+            earnLoyaltyPoints(
+              {
+                walletNumber: second.walletNumber,
+                points: LoyaltyPoints.of(70),
+                at,
+              },
+              second,
+            ),
+          ],
         },
       ]);
 
@@ -129,8 +150,6 @@ describe('Loyalty wallet store', () => {
   });
 
   describe('projections', () => {
-    const at = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
-
     const save = async (
       walletNumber: WalletNumber,
       events: LoyaltyWalletEvent | LoyaltyWalletEvent[],

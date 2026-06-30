@@ -1,18 +1,13 @@
+import { type SQLiteEventStore } from '@event-driven-io/emmett-sqlite';
 import { type PongoClient } from '@event-driven-io/pongo';
-import { applyProjections } from '../core';
 import { type MemberId } from '../membership';
-import { activityReportProjection } from './activityReport';
 import {
   LoyaltyWallet,
   type LoyaltyWalletEvent,
   type WalletNumber,
+  evolve,
 } from './loyaltyWallet';
-import { monthlySummaryProjection } from './monthlySummary';
-import {
-  findLoyaltyWalletsByOwners,
-  walletDetailsProjection,
-} from './walletDetails';
-import { getLoyaltyWallet } from './walletDetails/walletDetails';
+import { findLoyaltyWalletsByOwners } from './walletDetails';
 
 export type GetLoyaltyWallet = (
   walletNumber: WalletNumber,
@@ -37,42 +32,36 @@ export type SaveLoyaltyWallets = (
 ) => Promise<void>;
 
 export const loyaltyWalletStore = (
+  eventStore: SQLiteEventStore,
   client: PongoClient,
-): Readonly<{
-  getLoyaltyWallet: GetLoyaltyWallet;
-  findLoyaltyWalletsByOwners: FindLoyaltyWalletsByOwners;
-  saveLoyaltyWallet: SaveLoyaltyWallet;
-  saveLoyaltyWallets: SaveLoyaltyWallets;
-}> => {
+) => {
   const db = client.db();
-  const projections = [
-    activityReportProjection,
-    monthlySummaryProjection,
-    walletDetailsProjection,
-  ];
 
   return {
-    getLoyaltyWallet: async (walletNumber) =>
-      getLoyaltyWallet(db, walletNumber),
-    findLoyaltyWalletsByOwners: (ownerIds) =>
+    db,
+    getLoyaltyWallet: async (walletNumber: WalletNumber) =>
+      (
+        await eventStore.aggregateStream<LoyaltyWallet, LoyaltyWalletEvent>(
+          walletNumber,
+          { evolve, initialState: LoyaltyWallet.initial },
+        )
+      ).state ?? LoyaltyWallet.initial(),
+    findLoyaltyWalletsByOwners: (ownerIds: MemberId[]) =>
       findLoyaltyWalletsByOwners(db, ownerIds),
-    saveLoyaltyWallet: async (_, events) => {
-      await client.withSession((session) =>
-        session.withTransaction(async () => {
-          if (events) await applyProjections(db, projections, events, session);
-        }),
-      );
+    saveLoyaltyWallet: async (
+      walletNumber: WalletNumber,
+      events?: LoyaltyWalletEvent | LoyaltyWalletEvent[],
+    ) => {
+      const toAppend =
+        events === undefined ? [] : Array.isArray(events) ? events : [events];
+      if (toAppend.length === 0) return;
+      await eventStore.appendToStream(walletNumber, toAppend);
     },
-    saveLoyaltyWallets: async (updates) => {
-      if (updates.length === 0) return;
-
-      await client.withSession((session) =>
-        session.withTransaction(async () => {
-          for (const { events } of updates) {
-            await applyProjections(db, projections, events, session);
-          }
-        }),
-      );
+    saveLoyaltyWallets: async (updates: LoyaltyWalletUpdate[]) => {
+      for (const { walletNumber, events } of updates) {
+        if (events.length === 0) continue;
+        await eventStore.appendToStream(walletNumber, events);
+      }
     },
   };
 };

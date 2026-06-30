@@ -1,29 +1,22 @@
-import { InMemorySQLiteDatabase } from '@event-driven-io/dumbo/sqlite3';
-import { type PongoClient, pongoClient } from '@event-driven-io/pongo';
-import { sqlite3Driver } from '@event-driven-io/pongo/sqlite3';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { MemberId } from '../../membership';
 import { type ActiveLoyaltyWallet } from '../loyaltyWallet';
 import { loyaltyWalletStore } from '../loyaltyWalletStore';
+import { testLoyaltyWalletStore } from '../loyaltyWalletStore.testStore';
 import { openWalletOnMemberVerified } from './openWalletOnMemberVerified';
 
 describe('Opening a wallet when a member is verified', () => {
   const OSKAR = MemberId.random();
 
-  let client: PongoClient;
   let store: ReturnType<typeof loyaltyWalletStore>;
+  let close: () => Promise<void>;
 
   beforeEach(async () => {
-    client = pongoClient({
-      driver: sqlite3Driver,
-      connectionString: InMemorySQLiteDatabase,
-    });
-    await client.connect();
-    store = loyaltyWalletStore(client);
+    ({ store, close } = await testLoyaltyWalletStore());
   });
 
   afterEach(async () => {
-    await client.close();
+    await close();
   });
 
   test('Opens an active wallet with the window derived from the tier', async () => {

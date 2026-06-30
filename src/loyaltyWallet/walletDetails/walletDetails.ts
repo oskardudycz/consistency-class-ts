@@ -1,5 +1,5 @@
+import { pongoSingleStreamProjection } from '@event-driven-io/emmett-sqlite';
 import type { PongoCollection, PongoDb } from '@event-driven-io/pongo';
-import type { Projection } from '../../core';
 import type { MemberId } from '../../membership';
 import { WalletAccess } from '../access';
 import {
@@ -136,14 +136,16 @@ const evolve = (
   }
 };
 
-export const walletCollection = (db: PongoDb): PongoCollection<WalletDetails> =>
-  db.collection<WalletDetails>(walletDetailsProjection.collectionName);
+const collectionName = 'wallets';
 
-export const walletDetailsProjection: Projection<
+export const walletCollection = (db: PongoDb): PongoCollection<WalletDetails> =>
+  db.collection<WalletDetails>(collectionName);
+
+export const walletDetailsProjection = pongoSingleStreamProjection<
   WalletDetails,
   LoyaltyWalletEvent
-> = {
-  collectionName: 'wallets',
+>({
+  collectionName,
   canHandle: [
     'LoyaltyWalletOpened',
     'WalletAccessGranted',
@@ -157,7 +159,7 @@ export const walletDetailsProjection: Projection<
   ],
   getDocumentId: (event) => event.data.walletNumber,
   evolve,
-};
+});
 
 const fromDocument = (doc: WalletDetails): LoyaltyWallet => {
   switch (doc.status) {
@@ -185,11 +187,3 @@ export const findLoyaltyWalletsByOwners = async (
       ownerId: { $in: ownerIds },
     })
   ).map(fromDocument);
-
-export const getLoyaltyWallet = async (
-  db: PongoDb,
-  walletNumber: WalletNumber,
-) => {
-  const doc = await walletCollection(db).findOne({ _id: walletNumber });
-  return doc ? fromDocument(doc) : LoyaltyWallet.initial();
-};

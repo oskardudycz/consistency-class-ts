@@ -1,15 +1,49 @@
-import { describe, expect, test } from 'vitest';
+import { InMemorySQLiteDatabase } from '@event-driven-io/dumbo/sqlite3';
+import {
+  eventsInStream,
+  expectPongoDocuments,
+  newEventsInStream,
+  SQLiteProjectionSpec,
+} from '@event-driven-io/emmett-sqlite';
+import { sqlite3EventStoreDriver } from '@event-driven-io/emmett-sqlite/sqlite3';
+import { beforeAll, beforeEach, describe, it } from 'vitest';
 import { MemberId } from '../../membership';
 import { LoyaltyPoints, RedemptionLimit } from '../loyaltyPoints';
 import { type LoyaltyWalletEvent, WalletNumber } from '../loyaltyWallet';
-import { type ActivityReport, evolve } from './activityReport';
+import {
+  type ActivityEntry,
+  type ActivityReport,
+  type WindowActivity,
+  activityReportProjection,
+} from './activityReport';
 
-describe('ActivityReport projection', () => {
-  const walletNumber = WalletNumber.random();
+// Pongo persists dates as ISO strings, so the stored report carries string timestamps.
+type StoredWindow = Omit<WindowActivity, 'entries'> & {
+  entries: (Omit<ActivityEntry, 'at'> & { at: string })[];
+};
+type StoredReport = Omit<ActivityReport, 'currentWindow' | 'closedWindows'> & {
+  currentWindow: StoredWindow;
+  closedWindows: StoredWindow[];
+};
+
+void describe('ActivityReport projection', () => {
+  let given: SQLiteProjectionSpec<LoyaltyWalletEvent>;
+  let walletNumber: WalletNumber;
   const owner = MemberId.random();
   const at = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
+  const iso = at.toISOString();
 
-  const opened: LoyaltyWalletEvent = {
+  beforeAll(() => {
+    given = SQLiteProjectionSpec.for({
+      projection: activityReportProjection,
+      driver: sqlite3EventStoreDriver,
+      fileName: InMemorySQLiteDatabase,
+    });
+  });
+
+  beforeEach(() => (walletNumber = WalletNumber.random()));
+
+  const opened = (): LoyaltyWalletEvent => ({
     type: 'LoyaltyWalletOpened',
     data: {
       walletNumber,
@@ -19,7 +53,7 @@ describe('ActivityReport projection', () => {
       earnedPoints: LoyaltyPoints.ZERO,
       redeemedPoints: LoyaltyPoints.ZERO,
     },
-  };
+  });
 
   const earned = (points: number): LoyaltyWalletEvent => ({
     type: 'LoyaltyPointsEarned',
@@ -43,64 +77,102 @@ describe('ActivityReport projection', () => {
     },
   });
 
-  const reset: LoyaltyWalletEvent = {
+  const windowReset = (): LoyaltyWalletEvent => ({
     type: 'RedemptionWindowReset',
     data: { walletNumber, ownerId: owner, at },
-  };
-
-  const fold = (events: LoyaltyWalletEvent[]): ActivityReport | null =>
-    events.reduce<ActivityReport | null>(
-      (document, event) => evolve(document, event),
-      null,
-    );
-
-  test('opens an empty report in its first window', () => {
-    const report = fold([opened]);
-
-    expect(report).not.toBeNull();
-    expect(report!.walletNumber).toBe(walletNumber);
-    expect(report!.ownerId).toBe(owner);
-    expect(report!.currentWindow.windowNumber).toBe(1);
-    expect(report!.currentWindow.hadActivity).toBe(false);
-    expect(report!.closedWindows).toHaveLength(0);
   });
 
-  test('groups earns and redemptions into the current window', () => {
-    const report = fold([opened, earned(100), redeemed(40, 38)]);
+  const reportShouldBe = (report: Omit<StoredReport, '_id'>) =>
+    expectPongoDocuments
+      .fromCollection<StoredReport>('activityReports')
+      .withId(walletNumber)
+      .toBeEqual({ _id: walletNumber, ...report });
 
-    expect(report!.currentWindow.earned).toBe(100);
-    expect(report!.currentWindow.redeemed).toBe(40);
-    expect(report!.currentWindow.burned).toBe(38);
-    expect(report!.currentWindow.redemptionCount).toBe(1);
-    expect(report!.currentWindow.hadActivity).toBe(true);
-    expect(report!.currentWindow.entries).toEqual([
-      { kind: 'Earned', points: 100, at },
-      { kind: 'Redeemed', points: 40, at },
-    ]);
-  });
+  void it('opens an empty report in its first window', () =>
+    given([])
+      .when(newEventsInStream(walletNumber, [opened()]))
+      .then(
+        reportShouldBe({
+          walletNumber,
+          ownerId: owner,
+          currentWindow: {
+            windowNumber: 1,
+            earned: 0,
+            redeemed: 0,
+            burned: 0,
+            redemptionCount: 0,
+            hadActivity: false,
+            entries: [],
+          },
+          closedWindows: [],
+        }),
+      ));
 
-  test('closes the current window and opens the next on reset', () => {
-    const report = fold([
-      opened,
-      earned(100),
-      redeemed(40, 38),
-      reset,
-      earned(20),
-    ]);
+  void it('groups earns and redemptions into the current window', () =>
+    given(eventsInStream(walletNumber, [opened()]))
+      .when(newEventsInStream(walletNumber, [earned(100), redeemed(40, 38)]))
+      .then(
+        reportShouldBe({
+          walletNumber,
+          ownerId: owner,
+          currentWindow: {
+            windowNumber: 1,
+            earned: 100,
+            redeemed: 40,
+            burned: 38,
+            redemptionCount: 1,
+            hadActivity: true,
+            entries: [
+              { kind: 'Earned', points: 100, at: iso },
+              { kind: 'Redeemed', points: 40, at: iso },
+            ],
+          },
+          closedWindows: [],
+        }),
+      ));
 
-    expect(report!.closedWindows).toHaveLength(1);
-    expect(report!.closedWindows[0].windowNumber).toBe(1);
-    expect(report!.closedWindows[0].earned).toBe(100);
-    expect(report!.closedWindows[0].redeemed).toBe(40);
-    expect(report!.closedWindows[0].burned).toBe(38);
-    expect(report!.currentWindow.windowNumber).toBe(2);
-    expect(report!.currentWindow.earned).toBe(20);
-    expect(report!.currentWindow.redeemed).toBe(0);
-  });
+  void it('closes the current window and opens the next on reset', () =>
+    given(
+      eventsInStream(walletNumber, [opened(), earned(100), redeemed(40, 38)]),
+    )
+      .when(newEventsInStream(walletNumber, [windowReset(), earned(20)]))
+      .then(
+        reportShouldBe({
+          walletNumber,
+          ownerId: owner,
+          currentWindow: {
+            windowNumber: 2,
+            earned: 20,
+            redeemed: 0,
+            burned: 0,
+            redemptionCount: 0,
+            hadActivity: true,
+            entries: [{ kind: 'Earned', points: 20, at: iso }],
+          },
+          closedWindows: [
+            {
+              windowNumber: 1,
+              earned: 100,
+              redeemed: 40,
+              burned: 38,
+              redemptionCount: 1,
+              hadActivity: true,
+              entries: [
+                { kind: 'Earned', points: 100, at: iso },
+                { kind: 'Redeemed', points: 40, at: iso },
+              ],
+            },
+          ],
+        }),
+      ));
 
-  test('ignores activity before the report is opened', () => {
-    const report = fold([earned(100)]);
-
-    expect(report).toBeNull();
-  });
+  void it('ignores activity before the report is opened', () =>
+    given([])
+      .when(newEventsInStream(walletNumber, [earned(100)]))
+      .then(
+        expectPongoDocuments
+          .fromCollection<ActivityReport>('activityReports')
+          .withId(walletNumber)
+          .notToExist(),
+      ));
 });

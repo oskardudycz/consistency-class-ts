@@ -1,10 +1,4 @@
-import { InMemorySQLiteDatabase } from '@event-driven-io/dumbo/sqlite3';
-import {
-  type PongoClient,
-  pongoClient,
-  type PongoCollection,
-} from '@event-driven-io/pongo';
-import { sqlite3Driver } from '@event-driven-io/pongo/sqlite3';
+import { type PongoClient, type PongoCollection } from '@event-driven-io/pongo';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   getMemberTier,
@@ -22,6 +16,7 @@ import {
   WalletNumber,
 } from '../loyaltyWallet';
 import { loyaltyWalletStore } from '../loyaltyWalletStore';
+import { testLoyaltyWalletStore } from '../loyaltyWalletStore.testStore';
 import {
   openLoyaltyWalletHandler,
   openWalletOnMemberVerified,
@@ -38,21 +33,19 @@ describe('Redeeming loyalty points', () => {
   let members: PongoCollection<Member>;
   let store: ReturnType<typeof loyaltyWalletStore>;
   let tierOf: ReturnType<typeof getMemberTier>;
+  let close: () => Promise<void>;
 
   beforeEach(async () => {
-    client = pongoClient({
-      driver: sqlite3Driver,
-      connectionString: InMemorySQLiteDatabase,
-    });
-    await client.connect();
-    const db = client.db();
-    members = db.collection<Member>('members');
-    store = loyaltyWalletStore(client);
+    const test = await testLoyaltyWalletStore();
+    store = test.store;
+    client = test.client;
+    close = test.close;
+    members = client.db().collection<Member>('members');
     tierOf = getMemberTier(members);
   });
 
   afterEach(async () => {
-    await client.close();
+    await close();
   });
 
   const enroll = async (memberId: MemberId, tier: Tier = 'Standard') => {

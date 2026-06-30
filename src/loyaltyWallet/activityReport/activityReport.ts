@@ -1,5 +1,5 @@
+import { pongoSingleStreamProjection } from '@event-driven-io/emmett-sqlite';
 import { type PongoDb } from '@event-driven-io/pongo';
-import { type Projection } from '../../core/projections';
 import { type MemberId } from '../../membership';
 import { type LoyaltyWalletEvent, type WalletNumber } from '../loyaltyWallet';
 
@@ -100,11 +100,13 @@ export const evolve = (
   }
 };
 
-export const activityReportProjection: Projection<
+const collectionName = 'activityReports';
+
+export const activityReportProjection = pongoSingleStreamProjection<
   ActivityReport,
   LoyaltyWalletEvent
-> = {
-  collectionName: 'activityReports',
+>({
+  collectionName,
   canHandle: [
     'LoyaltyWalletOpened',
     'LoyaltyPointsEarned',
@@ -113,7 +115,7 @@ export const activityReportProjection: Projection<
   ],
   getDocumentId: (event) => event.data.walletNumber,
   evolve,
-};
+});
 
 export const activityReportCollection = (db: PongoDb) =>
-  db.collection<ActivityReport>(activityReportProjection.collectionName);
+  db.collection<ActivityReport>(collectionName);

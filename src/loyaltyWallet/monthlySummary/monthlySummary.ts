@@ -1,5 +1,5 @@
+import { pongoMultiStreamProjection } from '@event-driven-io/emmett-sqlite';
 import { type PongoDb } from '@event-driven-io/pongo';
-import { type Projection } from '../../core/projections';
 import { type MemberId } from '../../membership';
 import {
   type LoyaltyPointsEarned,
@@ -8,7 +8,7 @@ import {
   type WalletNumber,
 } from '../loyaltyWallet';
 
-type MonthlySummaryEvent =
+export type MonthlySummaryEvent =
   | LoyaltyPointsEarned
   | LoyaltyPointsRedeemed
   | RedemptionWindowReset;
@@ -66,11 +66,13 @@ export const evolve = (
   }
 };
 
-export const monthlySummaryProjection: Projection<
+const collectionName = 'monthlySummaries';
+
+export const monthlySummaryProjection = pongoMultiStreamProjection<
   MonthlySummary,
   MonthlySummaryEvent
-> = {
-  collectionName: 'monthlySummaries',
+>({
+  collectionName,
   canHandle: [
     'LoyaltyPointsEarned',
     'LoyaltyPointsRedeemed',
@@ -78,7 +80,7 @@ export const monthlySummaryProjection: Projection<
   ],
   getDocumentId: documentId,
   evolve,
-};
+});
 
 export const monthlySummaryCollection = (db: PongoDb) =>
-  db.collection<MonthlySummary>(monthlySummaryProjection.collectionName);
+  db.collection<MonthlySummary>(collectionName);
