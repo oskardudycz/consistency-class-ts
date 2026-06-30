@@ -16,5 +16,7 @@ export const deactivateWalletHandler = async (
 ) => {
   const wallet = await getLoyaltyWallet(command.walletNumber);
 
-  await saveLoyaltyWallet(deactivateWallet(wallet));
+  const [state, ...events] = deactivateWallet(wallet);
+
+  await saveLoyaltyWallet(state, events);
 };

@@ -40,9 +40,9 @@ describe('LoyaltyWallet', () => {
     )[0];
 
   const deactivated = (): DeactivatedLoyaltyWallet =>
-    deactivateWallet(openWallet());
+    deactivateWallet(openWallet())[0];
 
-  const closed = (): ClosedLoyaltyWallet => closeWallet(openWallet());
+  const closed = (): ClosedLoyaltyWallet => closeWallet(openWallet())[0];
 
   describe('Opening', () => {
     test('Opens a not existing wallet and emits LoyaltyWalletOpened', () => {
@@ -273,9 +273,9 @@ describe('LoyaltyWallet', () => {
   });
 
   describe('Setting redemption cadence', () => {
-    test('Changes cadence on an active wallet', () => {
+    test('Changes cadence on an active wallet and emits RedemptionCadenceSet', () => {
       // when
-      const newState = setRedemptionCadence(
+      const [newState, cadenceSet] = setRedemptionCadence(
         { walletNumber, cadence: 'Monthly' },
         openWallet(),
       );
@@ -283,6 +283,10 @@ describe('LoyaltyWallet', () => {
       // then
       assertActive(newState);
       expect(newState.cadence).toBe('Monthly');
+      expect(cadenceSet).toEqual({
+        type: 'RedemptionCadenceSet',
+        data: { walletNumber, ownerId: owner, cadence: 'Monthly' },
+      });
     });
 
     test('Cant set cadence if wallet does not exist', () => {
@@ -306,9 +310,47 @@ describe('LoyaltyWallet', () => {
       expect(newState.pointsLimit.availablePoints).toBe(60);
     });
 
+    test('Grants access to a family member and emits WalletAccessGranted', () => {
+      // when
+      const [newState, granted] = grantWalletAccess(
+        { walletNumber, memberId: familyMember },
+        openWallet(),
+      );
+
+      // then
+      assertActive(newState);
+      expect(newState.access.has(familyMember)).toBe(true);
+      expect(granted).toEqual({
+        type: 'WalletAccessGranted',
+        data: { walletNumber, ownerId: owner, memberId: familyMember },
+      });
+    });
+
+    test('Revokes access from a family member and emits WalletAccessRevoked', () => {
+      // given
+      const [shared] = grantWalletAccess(
+        { walletNumber, memberId: familyMember },
+        openWallet(),
+      );
+
+      // when
+      const [newState, revoked] = revokeWalletAccess(
+        { walletNumber, memberId: familyMember },
+        shared,
+      );
+
+      // then
+      assertActive(newState);
+      expect(newState.access.has(familyMember)).toBe(false);
+      expect(revoked).toEqual({
+        type: 'WalletAccessRevoked',
+        data: { walletNumber, ownerId: owner, memberId: familyMember },
+      });
+    });
+
     test('A granted family member can redeem from the shared balance', () => {
       // given
-      const shared = grantWalletAccess(
+      const [shared] = grantWalletAccess(
         { walletNumber, memberId: familyMember },
         walletWithPoints(100),
       );
@@ -345,12 +387,12 @@ describe('LoyaltyWallet', () => {
 
     test('Cant redeem after access is revoked', () => {
       // given
-      const shared = grantWalletAccess(
+      const [shared] = grantWalletAccess(
         { walletNumber, memberId: familyMember },
         walletWithPoints(100),
       );
       // and
-      const revoked = revokeWalletAccess(
+      const [revoked] = revokeWalletAccess(
         { walletNumber, memberId: familyMember },
         shared,
       );
@@ -421,7 +463,7 @@ describe('LoyaltyWallet', () => {
   });
 
   describe('Deactivating', () => {
-    test('Deactivates an active wallet keeping its data', () => {
+    test('Deactivates an active wallet keeping its data and emits WalletDeactivated', () => {
       // given
       const [walletAfterRedeem] = redeemLoyaltyPoints(
         { walletNumber, memberId: owner, points: LoyaltyPoints.of(10), at },
@@ -429,24 +471,29 @@ describe('LoyaltyWallet', () => {
       );
 
       // when
-      const newState = deactivateWallet(walletAfterRedeem);
+      const [newState, deactivatedEvent] = deactivateWallet(walletAfterRedeem);
 
       // then
       assertDeactivated(newState);
       expect(newState.walletNumber).toBe(walletNumber);
       expect(newState.cadence).toBe('Weekly');
       expect(newState.pointsLimit.availablePoints).toBe(90);
+      expect(deactivatedEvent).toEqual({
+        type: 'WalletDeactivated',
+        data: { walletNumber, ownerId: owner },
+      });
     });
 
-    test('Leaves an already deactivated wallet unchanged', () => {
+    test('Leaves an already deactivated wallet unchanged without events', () => {
       // given
       const deactivatedWallet = deactivated();
 
       // when
-      const newState = deactivateWallet(deactivatedWallet);
+      const [newState, ...events] = deactivateWallet(deactivatedWallet);
 
       // then
       expect(newState).toBe(deactivatedWallet);
+      expect(events).toHaveLength(0);
     });
 
     test('Cant deactivate a wallet that does not exist', () => {
@@ -461,31 +508,36 @@ describe('LoyaltyWallet', () => {
   });
 
   describe('Closing', () => {
-    test('Closes an active wallet', () => {
+    test('Closes an active wallet and emits WalletClosed', () => {
       // when
-      const newState = closeWallet(openWallet());
+      const [newState, closedEvent] = closeWallet(openWallet());
 
       // then
       assertClosed(newState);
+      expect(closedEvent).toEqual({
+        type: 'WalletClosed',
+        data: { walletNumber },
+      });
     });
 
     test('Closes a deactivated wallet', () => {
       // when
-      const newState = closeWallet(deactivated());
+      const [newState] = closeWallet(deactivated());
 
       // then
       assertClosed(newState);
     });
 
-    test('Leaves an already closed wallet unchanged', () => {
+    test('Leaves an already closed wallet unchanged without events', () => {
       // given
       const closedWallet = closed();
 
       // when
-      const newState = closeWallet(closedWallet);
+      const [newState, ...events] = closeWallet(closedWallet);
 
       // then
       expect(newState).toBe(closedWallet);
+      expect(events).toHaveLength(0);
     });
 
     test('Cant close a wallet that does not exist', () => {
@@ -605,7 +657,7 @@ describe('LoyaltyWallet', () => {
     });
 
     test('Routes RevokeWalletAccess', () => {
-      const shared = grantWalletAccess(
+      const [shared] = grantWalletAccess(
         { walletNumber, memberId: familyMember },
         openWallet(),
       );

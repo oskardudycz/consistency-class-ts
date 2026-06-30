@@ -19,5 +19,7 @@ export const setRedemptionCadenceHandler = async (
 ) => {
   const wallet = await getLoyaltyWallet(command.walletNumber);
 
-  await saveLoyaltyWallet(setRedemptionCadence(command, wallet));
+  const [state, ...events] = setRedemptionCadence(command, wallet);
+
+  await saveLoyaltyWallet(state, events);
 };

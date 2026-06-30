@@ -119,11 +119,58 @@ export type RedemptionWindowReset = Event<
   }
 >;
 
+export type RedemptionCadenceSet = Event<
+  'RedemptionCadenceSet',
+  {
+    walletNumber: WalletNumber;
+    ownerId: MemberId;
+    cadence: RedemptionCadence;
+  }
+>;
+
+export type WalletAccessGranted = Event<
+  'WalletAccessGranted',
+  {
+    walletNumber: WalletNumber;
+    ownerId: MemberId;
+    memberId: MemberId;
+  }
+>;
+
+export type WalletAccessRevoked = Event<
+  'WalletAccessRevoked',
+  {
+    walletNumber: WalletNumber;
+    ownerId: MemberId;
+    memberId: MemberId;
+  }
+>;
+
+export type WalletDeactivated = Event<
+  'WalletDeactivated',
+  {
+    walletNumber: WalletNumber;
+    ownerId: MemberId;
+  }
+>;
+
+export type WalletClosed = Event<
+  'WalletClosed',
+  {
+    walletNumber: WalletNumber;
+  }
+>;
+
 export type LoyaltyWalletEvent =
   | LoyaltyWalletOpened
   | LoyaltyPointsEarned
   | LoyaltyPointsRedeemed
-  | RedemptionWindowReset;
+  | RedemptionWindowReset
+  | RedemptionCadenceSet
+  | WalletAccessGranted
+  | WalletAccessRevoked
+  | WalletDeactivated
+  | WalletClosed;
 
 export type LoyaltyWalletCommand =
   | OpenLoyaltyWallet
@@ -148,17 +195,17 @@ export const decide = (
     case 'RedeemLoyaltyPoints':
       return redeemLoyaltyPoints(command, state);
     case 'SetRedemptionCadence':
-      return [setRedemptionCadence(command, state)];
+      return setRedemptionCadence(command, state);
     case 'GrantWalletAccess':
-      return [grantWalletAccess(command, state)];
+      return grantWalletAccess(command, state);
     case 'RevokeWalletAccess':
-      return [revokeWalletAccess(command, state)];
+      return revokeWalletAccess(command, state);
     case 'ResetRedemptionWindow':
       return resetRedemptionWindow(command, state);
     case 'DeactivateWallet':
-      return [deactivateWallet(state)];
+      return deactivateWallet(state);
     case 'CloseWallet':
-      return [closeWallet(state)];
+      return closeWallet(state);
   }
 };
 
@@ -292,15 +339,25 @@ export type SetRedemptionCadence = Command<
 export const setRedemptionCadence = (
   command: SetRedemptionCadence['data'],
   state: LoyaltyWallet,
-): ActiveLoyaltyWallet => {
+): [ActiveLoyaltyWallet, RedemptionCadenceSet] => {
   const wallet = assertIs(state, 'Active');
 
   const { cadence } = command;
 
-  return {
-    ...wallet,
-    cadence,
-  };
+  return [
+    {
+      ...wallet,
+      cadence,
+    },
+    {
+      type: 'RedemptionCadenceSet',
+      data: {
+        walletNumber: wallet.walletNumber,
+        ownerId: wallet.ownerId,
+        cadence,
+      },
+    },
+  ];
 };
 
 export type GrantWalletAccess = Command<
@@ -314,13 +371,23 @@ export type GrantWalletAccess = Command<
 export const grantWalletAccess = (
   command: GrantWalletAccess['data'],
   state: LoyaltyWallet,
-): ActiveLoyaltyWallet => {
+): [ActiveLoyaltyWallet, WalletAccessGranted] => {
   const wallet = assertIs(state, 'Active');
 
-  return {
-    ...wallet,
-    access: wallet.access.add(command.memberId),
-  };
+  return [
+    {
+      ...wallet,
+      access: wallet.access.add(command.memberId),
+    },
+    {
+      type: 'WalletAccessGranted',
+      data: {
+        walletNumber: wallet.walletNumber,
+        ownerId: wallet.ownerId,
+        memberId: command.memberId,
+      },
+    },
+  ];
 };
 
 export type RevokeWalletAccess = Command<
@@ -334,13 +401,23 @@ export type RevokeWalletAccess = Command<
 export const revokeWalletAccess = (
   command: RevokeWalletAccess['data'],
   state: LoyaltyWallet,
-): ActiveLoyaltyWallet => {
+): [ActiveLoyaltyWallet, WalletAccessRevoked] => {
   const wallet = assertIs(state, 'Active');
 
-  return {
-    ...wallet,
-    access: wallet.access.revoke(command.memberId),
-  };
+  return [
+    {
+      ...wallet,
+      access: wallet.access.revoke(command.memberId),
+    },
+    {
+      type: 'WalletAccessRevoked',
+      data: {
+        walletNumber: wallet.walletNumber,
+        ownerId: wallet.ownerId,
+        memberId: command.memberId,
+      },
+    },
+  ];
 };
 
 export type ResetRedemptionWindow = Command<
@@ -382,15 +459,23 @@ export type DeactivateWallet = Command<
 
 export const deactivateWallet = (
   state: LoyaltyWallet,
-): DeactivatedLoyaltyWallet => {
-  if (state.status === 'Deactivated') return state;
+):
+  | [DeactivatedLoyaltyWallet]
+  | [DeactivatedLoyaltyWallet, WalletDeactivated] => {
+  if (state.status === 'Deactivated') return [state];
 
   const wallet = assertIs(state, 'Active');
 
-  return {
-    ...wallet,
-    status: 'Deactivated',
-  };
+  return [
+    {
+      ...wallet,
+      status: 'Deactivated',
+    },
+    {
+      type: 'WalletDeactivated',
+      data: { walletNumber: wallet.walletNumber, ownerId: wallet.ownerId },
+    },
+  ];
 };
 
 export type CloseWallet = Command<
@@ -400,14 +485,22 @@ export type CloseWallet = Command<
   }
 >;
 
-export const closeWallet = (state: LoyaltyWallet): ClosedLoyaltyWallet => {
-  if (state.status === 'Closed') return state;
+export const closeWallet = (
+  state: LoyaltyWallet,
+): [ClosedLoyaltyWallet] | [ClosedLoyaltyWallet, WalletClosed] => {
+  if (state.status === 'Closed') return [state];
   if (state.status === 'NotExisting') throw new Error("Wallet doesn't exist");
 
-  return {
-    status: 'Closed',
-    walletNumber: state.walletNumber,
-  };
+  return [
+    {
+      status: 'Closed',
+      walletNumber: state.walletNumber,
+    },
+    {
+      type: 'WalletClosed',
+      data: { walletNumber: state.walletNumber },
+    },
+  ];
 };
 
 const assertIs = <Status extends LoyaltyWallet['status']>(
