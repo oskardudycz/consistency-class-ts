@@ -1,0 +1,1 @@
+export { propagateAccessToWindow } from './propagateAccessToWindow';

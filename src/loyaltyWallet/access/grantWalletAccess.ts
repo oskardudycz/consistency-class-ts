@@ -13,10 +13,9 @@ export const grantWalletAccessHandler = async (
     saveLoyaltyWallet: SaveLoyaltyWallet;
   },
   { data: command }: GrantWalletAccess,
-) => {
+): Promise<void> => {
   const wallet = await getLoyaltyWallet(command.walletNumber);
 
   const granted = grantWalletAccess(command, wallet);
-
-  return saveLoyaltyWallet(granted.data.walletNumber, granted);
+  await saveLoyaltyWallet(granted.data.walletNumber, granted);
 };

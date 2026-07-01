@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { LoyaltyPoints } from '../loyaltyPoints';
+import { LoyaltyPoints } from '../../loyaltyPoints';
 import { BenefitPolicy } from './benefitPolicy';
-import { type Tier } from '../../membership';
+import { type Tier } from '../../../membership';
 
 describe('BenefitPolicy', () => {
   test.each<[Tier, number, number]>([

@@ -1,201 +1,159 @@
-import { type PongoClient } from '@event-driven-io/pongo';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { openLoyaltyWalletHandler } from '.';
 import { MemberId } from '../membership';
 import { activityReportCollection } from './activityReport';
 import { LoyaltyPoints, RedemptionLimit } from './loyaltyPoints';
+import { WalletNumber } from './loyaltyWallet';
 import {
-  type ActiveLoyaltyWallet,
-  earnLoyaltyPoints,
-  LoyaltyWallet,
-  type LoyaltyWalletEvent,
-  openLoyaltyWallet,
-  redeemLoyaltyPoints,
-  resetRedemptionWindow,
-  WalletNumber,
-} from './loyaltyWallet';
-import { loyaltyWalletStore } from './loyaltyWalletStore';
-import { testLoyaltyWalletStore } from './loyaltyWalletStore.testStore';
+  testLoyaltyWalletStore,
+  type TestLoyaltyWalletStore,
+} from './loyaltyWalletStore.testStore';
 import { monthlySummaryCollection } from './monthlySummary';
+import {
+  closeRedemptionWindowHandler,
+  earnLoyaltyPoints,
+  openRedemptionWindowOnProgressed,
+  progressWalletOnRedemptionWindowClosed,
+  redeemLoyaltyPoints,
+  type RedemptionWindowClosed,
+} from './redemptionWindow';
 
 describe('Loyalty wallet store', () => {
   const at = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
 
-  let client: PongoClient;
-  let store: ReturnType<typeof loyaltyWalletStore>;
-  let close: () => Promise<void>;
+  let store: TestLoyaltyWalletStore['store'];
+  let windowStore: TestLoyaltyWalletStore['windowStore'];
+  let client: TestLoyaltyWalletStore['client'];
+  let close: TestLoyaltyWalletStore['close'];
 
   beforeEach(async () => {
-    const test = await testLoyaltyWalletStore();
-    store = test.store;
-    client = test.client;
-    close = test.close;
+    ({ store, windowStore, client, close } = await testLoyaltyWalletStore());
   });
 
   afterEach(async () => {
     await close();
   });
 
-  const enroll = async (ownerId: MemberId): Promise<ActiveLoyaltyWallet> => {
+  const walletDeps = () => ({
+    getLoyaltyWallet: store.getLoyaltyWallet,
+    saveLoyaltyWallet: store.saveLoyaltyWallet,
+  });
+
+  const windowDeps = () => ({
+    currentWindowOf: windowStore.currentWindowOf,
+    getRedemptionWindow: windowStore.getRedemptionWindow,
+    saveRedemptionWindow: windowStore.saveRedemptionWindow,
+  });
+
+  const open = async (ownerId: MemberId): Promise<WalletNumber> => {
     const walletNumber = WalletNumber.random();
-    await store.saveLoyaltyWallet(
-      walletNumber,
-      openLoyaltyWallet(
-        {
-          walletNumber,
-          ownerId,
-          cadence: 'Monthly',
-          maxRedemptionCount: RedemptionLimit.of(10),
-        },
-        LoyaltyWallet.initial(),
-      ),
-    );
-    return (await store.getLoyaltyWallet(walletNumber)) as ActiveLoyaltyWallet;
+    await openLoyaltyWalletHandler(walletDeps(), {
+      type: 'OpenLoyaltyWallet',
+      data: {
+        walletNumber,
+        ownerId,
+        cadence: 'Monthly',
+        maxRedemptionCount: RedemptionLimit.of(5),
+      },
+    });
+    await openRedemptionWindowOnProgressed(windowDeps(), {
+      type: 'RedemptionWindowProgressed',
+      data: {
+        walletNumber,
+        windowNumber: 1,
+        openingBalance: LoyaltyPoints.ZERO,
+        ownerId,
+        access: [ownerId],
+        maxRedemptionCount: RedemptionLimit.of(5),
+      },
+    });
+    return walletNumber;
   };
 
-  const ownerOf = (wallet: LoyaltyWallet): MemberId =>
-    (wallet as ActiveLoyaltyWallet).ownerId;
+  const earn = async (walletNumber: WalletNumber, points: number) => {
+    const pointer = await windowStore.currentWindowOf(walletNumber);
+    const window = await windowStore.getRedemptionWindow(
+      walletNumber,
+      pointer!.windowNumber,
+    );
+    await windowStore.saveRedemptionWindow(
+      walletNumber,
+      pointer!.windowNumber,
+      earnLoyaltyPoints(
+        { walletNumber, points: LoyaltyPoints.of(points), at },
+        window,
+      ),
+    );
+  };
 
-  const balanceOf = (wallet: LoyaltyWallet): number =>
-    (wallet as ActiveLoyaltyWallet).pointsLimit.availablePoints;
+  const redeem = async (
+    walletNumber: WalletNumber,
+    memberId: MemberId,
+    points: number,
+  ) => {
+    const pointer = await windowStore.currentWindowOf(walletNumber);
+    const window = await windowStore.getRedemptionWindow(
+      walletNumber,
+      pointer!.windowNumber,
+    );
+    await windowStore.saveRedemptionWindow(
+      walletNumber,
+      pointer!.windowNumber,
+      redeemLoyaltyPoints(
+        {
+          walletNumber,
+          memberId,
+          points: LoyaltyPoints.of(points),
+          burned: LoyaltyPoints.of(points),
+          at,
+        },
+        window,
+      ),
+    );
+  };
+
+  const closeWindow = async (walletNumber: WalletNumber, ownerId: MemberId) => {
+    await closeRedemptionWindowHandler(windowDeps(), {
+      type: 'CloseRedemptionWindow',
+      data: { walletNumber, closedAt: at },
+    });
+    await progressWalletOnRedemptionWindowClosed(walletDeps(), {
+      type: 'RedemptionWindowClosed',
+      data: { walletNumber, closedAt: at },
+    } as RedemptionWindowClosed);
+
+    await openRedemptionWindowOnProgressed(windowDeps(), {
+      type: 'RedemptionWindowProgressed',
+      data: {
+        access: [ownerId],
+        ownerId,
+        walletNumber,
+        maxRedemptionCount: RedemptionLimit.of(5),
+        windowNumber: 2,
+        openingBalance: LoyaltyPoints.ZERO,
+      },
+    });
+  };
 
   test('round-trips a wallet by its wallet number', async () => {
     // given
-    const wallet = await enroll(MemberId.random());
+    const walletNumber = await open(MemberId.random());
 
     // then it can be loaded back by its number
-    const loaded = await store.getLoyaltyWallet(wallet.walletNumber);
+    const loaded = await store.getLoyaltyWallet(walletNumber);
     expect(loaded.status).toBe('Active');
-    expect(loaded.walletNumber).toBe(wallet.walletNumber);
-  });
-
-  describe('findLoyaltyWalletsByOwners', () => {
-    test('returns a list of the requested owners wallets', async () => {
-      // given
-      const first = MemberId.random();
-      const second = MemberId.random();
-      await enroll(first);
-      await enroll(second);
-
-      // when
-      const found = await store.findLoyaltyWalletsByOwners([first, second]);
-
-      // then
-      expect(found).toHaveLength(2);
-      expect(found.map(ownerOf)).toContain(first);
-      expect(found.map(ownerOf)).toContain(second);
-    });
-
-    test('omits owners without a wallet', async () => {
-      // given
-      const enrolled = MemberId.random();
-      const unknown = MemberId.random();
-      await enroll(enrolled);
-
-      // when
-      const found = await store.findLoyaltyWalletsByOwners([enrolled, unknown]);
-
-      // then
-      expect(found).toHaveLength(1);
-      expect(ownerOf(found[0])).toBe(enrolled);
-    });
-  });
-
-  describe('saveLoyaltyWallets', () => {
-    test('persists every wallet in the batch in one call', async () => {
-      // given two enrolled wallets earning points
-      const firstOwner = MemberId.random();
-      const secondOwner = MemberId.random();
-      const first = await enroll(firstOwner);
-      const second = await enroll(secondOwner);
-
-      // when both are credited in a single batch
-      await store.saveLoyaltyWallets([
-        {
-          walletNumber: first.walletNumber,
-          events: [
-            earnLoyaltyPoints(
-              {
-                walletNumber: first.walletNumber,
-                points: LoyaltyPoints.of(30),
-                at,
-              },
-              first,
-            ),
-          ],
-        },
-        {
-          walletNumber: second.walletNumber,
-          events: [
-            earnLoyaltyPoints(
-              {
-                walletNumber: second.walletNumber,
-                points: LoyaltyPoints.of(70),
-                at,
-              },
-              second,
-            ),
-          ],
-        },
-      ]);
-
-      // then both wallets reflect their new balance
-      const reloaded = await store.findLoyaltyWalletsByOwners([
-        firstOwner,
-        secondOwner,
-      ]);
-      const byOwner = new Map(reloaded.map((w) => [ownerOf(w), w]));
-      expect(balanceOf(byOwner.get(firstOwner)!)).toBe(30);
-      expect(balanceOf(byOwner.get(secondOwner)!)).toBe(70);
-    });
+    expect(loaded.walletNumber).toBe(walletNumber);
   });
 
   describe('projections', () => {
-    const save = async (
-      walletNumber: WalletNumber,
-      events: LoyaltyWalletEvent | LoyaltyWalletEvent[],
-    ): Promise<void> => store.saveLoyaltyWallet(walletNumber, events);
-
-    test('writes the activity report and monthly summary alongside the wallet', async () => {
+    test('writes the activity report and monthly summary from the window flow', async () => {
       // given an opened wallet earning and redeeming within one window
       const owner = MemberId.random();
-      const walletNumber = WalletNumber.random();
+      const walletNumber = await open(owner);
 
-      await save(
-        walletNumber,
-        openLoyaltyWallet(
-          {
-            walletNumber,
-            ownerId: owner,
-            cadence: 'Monthly',
-            maxRedemptionCount: RedemptionLimit.of(5),
-          },
-          LoyaltyWallet.initial(),
-        ),
-      );
-
-      const opened = await store.getLoyaltyWallet(walletNumber);
-      await save(
-        walletNumber,
-        earnLoyaltyPoints(
-          { walletNumber, points: LoyaltyPoints.of(100), at },
-          opened,
-        ),
-      );
-
-      const earned = await store.getLoyaltyWallet(walletNumber);
-      await save(
-        walletNumber,
-        redeemLoyaltyPoints(
-          { walletNumber, memberId: owner, points: LoyaltyPoints.of(40), at },
-          earned,
-        ),
-      );
-
-      const redeemed = await store.getLoyaltyWallet(walletNumber);
-      await save(
-        walletNumber,
-        resetRedemptionWindow({ walletNumber, at }, redeemed),
-      );
+      await earn(walletNumber, 100);
+      await redeem(walletNumber, owner, 40);
+      await closeWindow(walletNumber, owner);
 
       // then the activity report groups the activity into windows
       const report = await activityReportCollection(client.db()).findOne({

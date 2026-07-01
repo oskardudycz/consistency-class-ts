@@ -1,17 +1,17 @@
 import { pongoMultiStreamProjection } from '@event-driven-io/emmett-sqlite';
 import { type PongoDb } from '@event-driven-io/pongo';
 import { type MemberId } from '../../membership';
+import { type WalletNumber } from '../loyaltyWallet';
 import {
   type LoyaltyPointsEarned,
   type LoyaltyPointsRedeemed,
-  type RedemptionWindowReset,
-  type WalletNumber,
-} from '../loyaltyWallet';
+  type RedemptionWindowClosed,
+} from '../redemptionWindow';
 
 export type MonthlySummaryEvent =
   | LoyaltyPointsEarned
   | LoyaltyPointsRedeemed
-  | RedemptionWindowReset;
+  | RedemptionWindowClosed;
 
 export type MonthlySummary = Readonly<{
   _id: string;
@@ -28,8 +28,11 @@ export type MonthlySummary = Readonly<{
 const monthOf = (at: Date): string =>
   `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, '0')}`;
 
+const occurredAt = (event: MonthlySummaryEvent): Date =>
+  event.type === 'RedemptionWindowClosed' ? event.data.closedAt : event.data.at;
+
 const documentId = (event: MonthlySummaryEvent): string =>
-  `${event.data.walletNumber}:${monthOf(event.data.at)}`;
+  `${event.data.walletNumber}:${monthOf(occurredAt(event))}`;
 
 export const evolve = (
   document: MonthlySummary | null,
@@ -39,7 +42,7 @@ export const evolve = (
     _id: documentId(event),
     walletNumber: event.data.walletNumber,
     ownerId: event.data.ownerId,
-    month: monthOf(event.data.at),
+    month: monthOf(occurredAt(event)),
     totalEarned: 0,
     totalRedeemed: 0,
     totalBurned: 0,
@@ -61,7 +64,7 @@ export const evolve = (
           summary.totalBurned + (event.data.burned ?? event.data.points),
         redemptionCount: summary.redemptionCount + 1,
       };
-    case 'RedemptionWindowReset':
+    case 'RedemptionWindowClosed':
       return { ...summary, windowsClosed: summary.windowsClosed + 1 };
   }
 };
@@ -76,7 +79,7 @@ export const monthlySummaryProjection = pongoMultiStreamProjection<
   canHandle: [
     'LoyaltyPointsEarned',
     'LoyaltyPointsRedeemed',
-    'RedemptionWindowReset',
+    'RedemptionWindowClosed',
   ],
   getDocumentId: documentId,
   evolve,

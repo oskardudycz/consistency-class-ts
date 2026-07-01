@@ -1,44 +1,69 @@
 export {
+  grantWalletAccessHandler,
+  revokeWalletAccessHandler,
+  WalletAccess,
+} from './access';
+export {
+  activityReportCollection,
+  activityReportProjection,
+} from './activityReport';
+export { LoyaltyPoints, RedemptionLimit } from './loyaltyPoints';
+export {
   LoyaltyWallet,
   WalletNumber,
-  type NotExistingLoyaltyWallet,
   type ActiveLoyaltyWallet,
-  type DeactivatedLoyaltyWallet,
   type ClosedLoyaltyWallet,
-  type RedemptionCadence,
-  type OpenLoyaltyWallet,
-  type RedeemLoyaltyPoints,
-  type SetRedemptionCadence,
-  type GrantWalletAccess,
-  type RevokeWalletAccess,
-  type ResetRedemptionWindow,
-  type DeactivateWallet,
   type CloseWallet,
+  type DeactivatedLoyaltyWallet,
+  type DeactivateWallet,
+  type GrantWalletAccess,
+  type NotExistingLoyaltyWallet,
+  type OpenLoyaltyWallet,
+  type OpenNextRedemptionWindow,
+  type RevokeWalletAccess,
+  type SetRedemptionCadence,
 } from './loyaltyWallet';
-export { LoyaltyPoints, RedemptionLimit } from './loyaltyPoints';
 export {
   loyaltyWalletStore,
   type GetLoyaltyWallet,
-  type FindLoyaltyWalletsByOwners,
   type SaveLoyaltyWallet,
-  type SaveLoyaltyWallets,
 } from './loyaltyWalletStore';
 export {
-  WalletAccess,
-  grantWalletAccessHandler,
-  revokeWalletAccessHandler,
-} from './access';
+  monthlySummaryCollection,
+  monthlySummaryProjection,
+} from './monthlySummary';
 export {
+  availableBalance,
+  closeRedemptionWindowHandler,
+  closeRedemptionWindowOnWalletDeactivated,
+  currentWindowCollection,
+  currentWindowProjection,
+  earnLoyaltyPoints,
   earnLoyaltyPointsHandler,
-  type PurchaseRecorded,
-} from './earningPoints';
+  openRedemptionWindowOnProgressed,
+  progressWalletOnRedemptionWindowClosed,
+  propagateAccessToWindow,
+  redeemLoyaltyPoints,
+  redeemLoyaltyPointsHandler,
+  redemptionsLeft,
+  RedemptionWindow,
+  redemptionWindowStore,
+  type CurrentWindow,
+  type CurrentWindowOf,
+  type CurrentWindowsByOwners,
+  type GetRedemptionWindow,
+  type LoyaltyPointsEarned,
+  type LoyaltyPointsRedeemed,
+  type RedemptionWindowClosed,
+  type RedemptionWindowEvent,
+  type RedemptionWindowUpdate,
+  type SaveRedemptionWindow,
+  type SaveRedemptionWindows,
+} from './redemptionWindow';
 export {
+  closeWalletHandler,
+  deactivateWalletHandler,
   openLoyaltyWalletHandler,
   openWalletOnMemberVerified,
-} from './openingWallet';
-export {
-  redeemLoyaltyPointsHandler,
   setRedemptionCadenceHandler,
-  resetRedemptionWindowHandler,
-} from './redeemingPoints';
-export { deactivateWalletHandler, closeWalletHandler } from './walletLifecycle';
+} from './walletLifecycle';

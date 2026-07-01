@@ -1,4 +1,8 @@
-import { closeWallet, type CloseWallet } from '../loyaltyWallet';
+import {
+  closeWallet,
+  type CloseWallet,
+  type LoyaltyWalletEvent,
+} from '../loyaltyWallet';
 import {
   type GetLoyaltyWallet,
   type SaveLoyaltyWallet,
@@ -13,8 +17,11 @@ export const closeWalletHandler = async (
     saveLoyaltyWallet: SaveLoyaltyWallet;
   },
   { data: command }: CloseWallet,
-) => {
+): Promise<LoyaltyWalletEvent[]> => {
   const wallet = await getLoyaltyWallet(command.walletNumber);
 
-  return saveLoyaltyWallet(command.walletNumber, closeWallet(wallet));
+  const events = closeWallet(wallet);
+  await saveLoyaltyWallet(command.walletNumber, events);
+
+  return Array.isArray(events) ? events : [events];
 };

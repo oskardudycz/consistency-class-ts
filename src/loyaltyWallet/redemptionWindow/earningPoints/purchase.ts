@@ -1,6 +1,6 @@
 import { type Brand, type Event } from '@event-driven-io/emmett';
-import { type LoyaltyPoints } from '../loyaltyPoints';
-import { type MemberId, type Tier } from '../../membership';
+import { type LoyaltyPoints } from '../../loyaltyPoints';
+import { type MemberId, type Tier } from '../../../membership';
 
 export type Money = Brand<number, 'Money'>;
 export const Money = {

@@ -1,4 +1,5 @@
 import {
+  type LoyaltyWalletEvent,
   setRedemptionCadence,
   type SetRedemptionCadence,
 } from '../loyaltyWallet';
@@ -16,11 +17,11 @@ export const setRedemptionCadenceHandler = async (
     saveLoyaltyWallet: SaveLoyaltyWallet;
   },
   { data: command }: SetRedemptionCadence,
-) => {
+): Promise<LoyaltyWalletEvent[]> => {
   const wallet = await getLoyaltyWallet(command.walletNumber);
 
-  return saveLoyaltyWallet(
-    command.walletNumber,
-    setRedemptionCadence(command, wallet),
-  );
+  const cadenceSet = setRedemptionCadence(command, wallet);
+  await saveLoyaltyWallet(command.walletNumber, cadenceSet);
+
+  return [cadenceSet];
 };

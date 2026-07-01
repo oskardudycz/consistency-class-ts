@@ -13,11 +13,9 @@ export const revokeWalletAccessHandler = async (
     saveLoyaltyWallet: SaveLoyaltyWallet;
   },
   { data: command }: RevokeWalletAccess,
-) => {
+): Promise<void> => {
   const wallet = await getLoyaltyWallet(command.walletNumber);
 
-  return saveLoyaltyWallet(
-    command.walletNumber,
-    revokeWalletAccess(command, wallet),
-  );
+  const revoked = revokeWalletAccess(command, wallet);
+  await saveLoyaltyWallet(command.walletNumber, revoked);
 };

@@ -1,5 +1,5 @@
-import { LoyaltyPoints } from '../loyaltyPoints';
-import { type Tier, tierProgram } from '../../membership';
+import { LoyaltyPoints } from '../../loyaltyPoints';
+import { type Tier, tierProgram } from '../../../membership';
 
 /**
  * Redeem-side computational policy: a tier may burn fewer points than redeemed

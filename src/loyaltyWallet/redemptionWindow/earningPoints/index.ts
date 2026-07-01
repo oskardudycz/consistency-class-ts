@@ -6,3 +6,4 @@ export {
   type Beneficiary,
   type PurchaseRecorded,
 } from './purchase';
+export { PointsCalculator } from './pointsCalculator';

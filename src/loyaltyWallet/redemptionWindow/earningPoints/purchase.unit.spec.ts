@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { LoyaltyPoints } from '../loyaltyPoints';
-import { MemberId } from '../../membership';
+import { LoyaltyPoints } from '../../loyaltyPoints';
+import { MemberId } from '../../../membership';
 import { Money, type PurchaseRecorded, purchaseInformation } from './purchase';
 
 describe('purchaseInformation', () => {

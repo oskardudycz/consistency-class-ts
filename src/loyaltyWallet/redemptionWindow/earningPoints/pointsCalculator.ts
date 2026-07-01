@@ -1,5 +1,5 @@
-import { LoyaltyPoints } from '../loyaltyPoints';
-import { type MemberId, type Tier } from '../../membership';
+import { LoyaltyPoints } from '../../loyaltyPoints';
+import { type MemberId, type Tier } from '../../../membership';
 import {
   type Channel,
   type EarnRole,

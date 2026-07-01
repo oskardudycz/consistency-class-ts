@@ -1,7 +1,8 @@
-import { pongoSingleStreamProjection } from '@event-driven-io/emmett-sqlite';
+import { pongoMultiStreamProjection } from '@event-driven-io/emmett-sqlite';
 import { type PongoDb } from '@event-driven-io/pongo';
 import { type MemberId } from '../../membership';
-import { type LoyaltyWalletEvent, type WalletNumber } from '../loyaltyWallet';
+import { type WalletNumber } from '../loyaltyWallet';
+import { type RedemptionWindowEvent } from '../redemptionWindow';
 
 export type ActivityEntry = Readonly<{
   kind: 'Earned' | 'Redeemed';
@@ -39,18 +40,21 @@ const emptyWindow = (windowNumber: number): WindowActivity => ({
 
 export const evolve = (
   document: ActivityReport | null,
-  event: LoyaltyWalletEvent,
+  event: RedemptionWindowEvent,
 ): ActivityReport | null => {
   switch (event.type) {
-    case 'LoyaltyWalletOpened': {
-      const { walletNumber, ownerId } = event.data;
-      return {
-        _id: walletNumber,
-        walletNumber,
-        ownerId,
-        currentWindow: emptyWindow(1),
-        closedWindows: [],
-      };
+    case 'RedemptionWindowOpened': {
+      const { walletNumber, ownerId, windowNumber } = event.data;
+      if (!document)
+        return {
+          _id: walletNumber,
+          walletNumber,
+          ownerId,
+          currentWindow: emptyWindow(windowNumber),
+          closedWindows: [],
+        };
+      if (document.currentWindow.windowNumber === windowNumber) return document;
+      return { ...document, currentWindow: emptyWindow(windowNumber) };
     }
     case 'LoyaltyPointsEarned': {
       if (!document) return document;
@@ -86,7 +90,7 @@ export const evolve = (
         },
       };
     }
-    case 'RedemptionWindowReset': {
+    case 'RedemptionWindowClosed': {
       if (!document) return document;
 
       return {
@@ -102,16 +106,16 @@ export const evolve = (
 
 const collectionName = 'activityReports';
 
-export const activityReportProjection = pongoSingleStreamProjection<
+export const activityReportProjection = pongoMultiStreamProjection<
   ActivityReport,
-  LoyaltyWalletEvent
+  RedemptionWindowEvent
 >({
   collectionName,
   canHandle: [
-    'LoyaltyWalletOpened',
+    'RedemptionWindowOpened',
     'LoyaltyPointsEarned',
     'LoyaltyPointsRedeemed',
-    'RedemptionWindowReset',
+    'RedemptionWindowClosed',
   ],
   getDocumentId: (event) => event.data.walletNumber,
   evolve,

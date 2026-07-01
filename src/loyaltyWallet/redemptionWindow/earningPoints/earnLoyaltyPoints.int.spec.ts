@@ -6,15 +6,18 @@ import {
   MemberId,
   memberVerifiedHandler,
   type Tier,
-} from '../../membership';
+} from '../../../membership';
+import { LoyaltyPoints, RedemptionLimit } from '../../loyaltyPoints';
+import { WalletNumber } from '../../loyaltyWallet';
 import {
-  type ActiveLoyaltyWallet,
-  type DeactivatedLoyaltyWallet,
-} from '../loyaltyWallet';
-import { loyaltyWalletStore } from '../loyaltyWalletStore';
-import { testLoyaltyWalletStore } from '../loyaltyWalletStore.testStore';
-import { openWalletOnMemberVerified } from '../openingWallet';
-import { deactivateWalletHandler } from '../walletLifecycle';
+  testRedemptionWindowStore,
+  type TestRedemptionWindowStore,
+} from '../redemptionWindowStore.testStore';
+import {
+  closeRedemptionWindowHandler,
+  openRedemptionWindowOnProgressed,
+} from '../windowLifecycle';
+import { availableBalance } from '../redemptionWindow';
 import { earnLoyaltyPointsHandler } from './earnLoyaltyPoints';
 import { type Channel, Money, type PurchaseRecorded } from './purchase';
 
@@ -23,21 +26,26 @@ describe('Earning loyalty points from a purchase', () => {
   const REFERRER = MemberId.random();
   const OPERATOR = MemberId.random();
 
+  let windowStore: TestRedemptionWindowStore['windowStore'];
+  let client: TestRedemptionWindowStore['client'];
+  let close: TestRedemptionWindowStore['close'];
   let members: PongoCollection<Member>;
-  let store: ReturnType<typeof loyaltyWalletStore>;
   let tierOf: ReturnType<typeof getMemberTier>;
-  let close: () => Promise<void>;
 
   beforeEach(async () => {
-    const test = await testLoyaltyWalletStore();
-    store = test.store;
-    close = test.close;
-    members = test.client.db().collection<Member>('members');
+    ({ windowStore, client, close } = await testRedemptionWindowStore());
+    members = client.db().collection<Member>('members');
     tierOf = getMemberTier(members);
   });
 
   afterEach(async () => {
     await close();
+  });
+
+  const windowDeps = () => ({
+    currentWindowOf: windowStore.currentWindowOf,
+    getRedemptionWindow: windowStore.getRedemptionWindow,
+    saveRedemptionWindow: windowStore.saveRedemptionWindow,
   });
 
   const enroll = async (memberId: MemberId, tier: Tier = 'Standard') => {
@@ -46,17 +54,25 @@ describe('Earning loyalty points from a purchase', () => {
       data: { memberId, tier },
     };
     await memberVerifiedHandler({ members }, event);
-    await openWalletOnMemberVerified(
-      { saveLoyaltyWallet: store.saveLoyaltyWallet },
-      event,
-    );
+    await openRedemptionWindowOnProgressed(windowDeps(), {
+      type: 'RedemptionWindowProgressed',
+      data: {
+        access: [memberId],
+        ownerId: memberId,
+        windowNumber: 1,
+        openingBalance: LoyaltyPoints.ZERO,
+        walletNumber: WalletNumber.forOwner(memberId),
+        maxRedemptionCount: RedemptionLimit.of(5),
+      },
+    });
   };
 
   const earn = (event: PurchaseRecorded) =>
     earnLoyaltyPointsHandler(
       {
-        findLoyaltyWalletsByOwners: store.findLoyaltyWalletsByOwners,
-        saveLoyaltyWallets: store.saveLoyaltyWallets,
+        currentWindowsByOwners: windowStore.currentWindowsByOwners,
+        getRedemptionWindow: windowStore.getRedemptionWindow,
+        saveRedemptionWindows: windowStore.saveRedemptionWindows,
         getMemberTier: tierOf,
       },
       event,
@@ -80,28 +96,27 @@ describe('Earning loyalty points from a purchase', () => {
     },
   });
 
-  const availableOf = async (memberId: MemberId): Promise<number> => {
-    const [wallet] = await store.findLoyaltyWalletsByOwners([memberId]);
-    expect(wallet?.status).toBe('Active');
-    return (wallet as ActiveLoyaltyWallet).pointsLimit.availablePoints;
-  };
-
-  const hasWallet = async (memberId: MemberId): Promise<boolean> => {
-    const [wallet] = await store.findLoyaltyWalletsByOwners([memberId]);
-    return wallet?.status === 'Active';
-  };
-
-  const deactivate = async (memberId: MemberId) => {
-    const wallet = (
-      await store.findLoyaltyWalletsByOwners([memberId])
-    )[0] as ActiveLoyaltyWallet;
-    await deactivateWalletHandler(
-      {
-        getLoyaltyWallet: store.getLoyaltyWallet,
-        saveLoyaltyWallet: store.saveLoyaltyWallet,
-      },
-      { type: 'DeactivateWallet', data: { walletNumber: wallet.walletNumber } },
+  const availableOf = async (
+    memberId: MemberId,
+  ): Promise<number | undefined> => {
+    const [pointer] = await windowStore.currentWindowsByOwners([memberId]);
+    if (!pointer) return undefined;
+    const window = await windowStore.getRedemptionWindow(
+      pointer.walletNumber,
+      pointer.windowNumber,
     );
+    return window.status === 'Open' ? availableBalance(window) : 0;
+  };
+
+  const hasWindow = async (memberId: MemberId): Promise<boolean> =>
+    (await windowStore.currentWindowsByOwners([memberId])).length > 0;
+
+  const closeWindowOf = async (memberId: MemberId) => {
+    const [current] = await windowStore.currentWindowsByOwners([memberId]);
+    await closeRedemptionWindowHandler(windowDeps(), {
+      type: 'CloseRedemptionWindow',
+      data: { walletNumber: current.walletNumber, closedAt: new Date() },
+    });
   };
 
   test('Distributes points across the buyer and every beneficiary', async () => {
@@ -134,7 +149,7 @@ describe('Earning loyalty points from a purchase', () => {
   });
 
   test('Skips a beneficiary outside the loyalty program', async () => {
-    // given the operator is not enrolled, so has no wallet
+    // given the operator is not enrolled, so has no window
     await enroll(BUYER);
     await enroll(REFERRER);
 
@@ -144,16 +159,16 @@ describe('Earning loyalty points from a purchase', () => {
     // then the enrolled recipients are still credited
     expect(await availableOf(BUYER)).toBe(100);
     expect(await availableOf(REFERRER)).toBe(10);
-    // and the unenrolled operator is simply skipped, no wallet conjured
-    expect(await hasWallet(OPERATOR)).toBe(false);
+    // and the unenrolled operator is simply skipped, no window conjured
+    expect(await hasWindow(OPERATOR)).toBe(false);
   });
 
-  test('Skips a beneficiary whose wallet is deactivated', async () => {
-    // given the referrer's wallet is deactivated
+  test('Skips a beneficiary whose window is closed', async () => {
+    // given the referrer's window is closed
     await enroll(BUYER);
     await enroll(REFERRER);
     await enroll(OPERATOR);
-    await deactivate(REFERRER);
+    await closeWindowOf(REFERRER);
 
     // when
     await earn(purchase(BUYER));
@@ -162,11 +177,7 @@ describe('Earning loyalty points from a purchase', () => {
     expect(await availableOf(BUYER)).toBe(100);
     expect(await availableOf(OPERATOR)).toBe(5);
     // and the deactivated referrer is skipped, its balance untouched
-    const referrer = (
-      await store.findLoyaltyWalletsByOwners([REFERRER])
-    )[0] as DeactivatedLoyaltyWallet;
-    expect(referrer.status).toBe('Deactivated');
-    expect(referrer.pointsLimit.availablePoints).toBe(0);
+    expect(await availableOf(REFERRER)).toBe(0);
   });
 
   test('Cant earn for an unknown buyer', async () => {

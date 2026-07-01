@@ -9,7 +9,8 @@ import { sqlite3EventStoreDriver } from '@event-driven-io/emmett-sqlite/sqlite3'
 import { beforeAll, beforeEach, describe, it } from 'vitest';
 import { MemberId } from '../../membership';
 import { LoyaltyPoints, RedemptionLimit } from '../loyaltyPoints';
-import { type LoyaltyWalletEvent, WalletNumber } from '../loyaltyWallet';
+import { WalletNumber } from '../loyaltyWallet';
+import { type RedemptionWindowEvent } from '../redemptionWindow';
 import {
   type ActivityEntry,
   type ActivityReport,
@@ -27,7 +28,7 @@ type StoredReport = Omit<ActivityReport, 'currentWindow' | 'closedWindows'> & {
 };
 
 void describe('ActivityReport projection', () => {
-  let given: SQLiteProjectionSpec<LoyaltyWalletEvent>;
+  let given: SQLiteProjectionSpec<RedemptionWindowEvent>;
   let walletNumber: WalletNumber;
   const owner = MemberId.random();
   const at = new Date(Date.UTC(2026, 5, 23, 12, 0, 0));
@@ -43,33 +44,39 @@ void describe('ActivityReport projection', () => {
 
   beforeEach(() => (walletNumber = WalletNumber.random()));
 
-  const opened = (): LoyaltyWalletEvent => ({
-    type: 'LoyaltyWalletOpened',
+  const opened = (windowNumber = 1): RedemptionWindowEvent => ({
+    type: 'RedemptionWindowOpened',
     data: {
       walletNumber,
       ownerId: owner,
-      cadence: 'Monthly',
+      windowNumber,
+      openingBalance: LoyaltyPoints.ZERO,
       maxRedemptionCount: RedemptionLimit.of(5),
-      earnedPoints: LoyaltyPoints.ZERO,
-      redeemedPoints: LoyaltyPoints.ZERO,
+      access: [owner],
     },
   });
 
-  const earned = (points: number): LoyaltyWalletEvent => ({
+  const earned = (points: number, windowNumber = 1): RedemptionWindowEvent => ({
     type: 'LoyaltyPointsEarned',
     data: {
       walletNumber,
       ownerId: owner,
+      windowNumber,
       points: LoyaltyPoints.of(points),
       at,
     },
   });
 
-  const redeemed = (points: number, burned = points): LoyaltyWalletEvent => ({
+  const redeemed = (
+    points: number,
+    burned = points,
+    windowNumber = 1,
+  ): RedemptionWindowEvent => ({
     type: 'LoyaltyPointsRedeemed',
     data: {
       walletNumber,
       ownerId: owner,
+      windowNumber,
       byMemberId: owner,
       points: LoyaltyPoints.of(points),
       burned: LoyaltyPoints.of(burned),
@@ -77,9 +84,17 @@ void describe('ActivityReport projection', () => {
     },
   });
 
-  const windowReset = (): LoyaltyWalletEvent => ({
-    type: 'RedemptionWindowReset',
-    data: { walletNumber, ownerId: owner, at },
+  const closed = (windowNumber = 1): RedemptionWindowEvent => ({
+    type: 'RedemptionWindowClosed',
+    data: {
+      walletNumber,
+      ownerId: owner,
+      windowNumber,
+      closingBalance: LoyaltyPoints.ZERO,
+      redemptionCount: RedemptionLimit.ZERO,
+      hadActivity: true,
+      closedAt: at,
+    },
   });
 
   const reportShouldBe = (report: Omit<StoredReport, '_id'>) =>
@@ -131,11 +146,13 @@ void describe('ActivityReport projection', () => {
         }),
       ));
 
-  void it('closes the current window and opens the next on reset', () =>
+  void it('closes the current window and opens the next', () =>
     given(
       eventsInStream(walletNumber, [opened(), earned(100), redeemed(40, 38)]),
     )
-      .when(newEventsInStream(walletNumber, [windowReset(), earned(20)]))
+      .when(
+        newEventsInStream(walletNumber, [closed(), opened(2), earned(20, 2)]),
+      )
       .then(
         reportShouldBe({
           walletNumber,

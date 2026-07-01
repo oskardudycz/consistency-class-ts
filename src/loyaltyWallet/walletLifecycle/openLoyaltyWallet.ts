@@ -13,11 +13,9 @@ export const openLoyaltyWalletHandler = async (
     saveLoyaltyWallet: SaveLoyaltyWallet;
   },
   { data: command }: OpenLoyaltyWallet,
-) => {
+): Promise<void> => {
   const wallet = await getLoyaltyWallet(command.walletNumber);
 
-  return saveLoyaltyWallet(
-    command.walletNumber,
-    openLoyaltyWallet(command, wallet),
-  );
+  const events = openLoyaltyWallet(command, wallet);
+  await saveLoyaltyWallet(command.walletNumber, events);
 };

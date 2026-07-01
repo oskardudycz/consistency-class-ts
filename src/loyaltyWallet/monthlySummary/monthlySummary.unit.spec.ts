@@ -9,13 +9,8 @@ import {
 import { sqlite3EventStoreDriver } from '@event-driven-io/emmett-sqlite/sqlite3';
 import { beforeAll, beforeEach, describe, it } from 'vitest';
 import { MemberId } from '../../membership';
-import { LoyaltyPoints } from '../loyaltyPoints';
-import {
-  type LoyaltyPointsEarned,
-  type LoyaltyPointsRedeemed,
-  type RedemptionWindowReset,
-  WalletNumber,
-} from '../loyaltyWallet';
+import { LoyaltyPoints, RedemptionLimit } from '../loyaltyPoints';
+import { WalletNumber } from '../loyaltyWallet';
 import {
   type MonthlySummary,
   type MonthlySummaryEvent,
@@ -39,11 +34,16 @@ void describe('MonthlySummary projection', () => {
 
   beforeEach(() => (walletNumber = WalletNumber.random()));
 
-  const earned = (points: number, at: Date): LoyaltyPointsEarned => ({
+  const earned = (
+    points: number,
+    at: Date,
+    windowNumber = 1,
+  ): MonthlySummaryEvent => ({
     type: 'LoyaltyPointsEarned',
     data: {
       walletNumber,
       ownerId: owner,
+      windowNumber,
       points: LoyaltyPoints.of(points),
       at,
     },
@@ -53,11 +53,13 @@ void describe('MonthlySummary projection', () => {
     points: number,
     at: Date,
     burned = points,
-  ): LoyaltyPointsRedeemed => ({
+    windowNumber = 1,
+  ): MonthlySummaryEvent => ({
     type: 'LoyaltyPointsRedeemed',
     data: {
       walletNumber,
       ownerId: owner,
+      windowNumber,
       byMemberId: owner,
       points: LoyaltyPoints.of(points),
       burned: LoyaltyPoints.of(burned),
@@ -65,9 +67,17 @@ void describe('MonthlySummary projection', () => {
     },
   });
 
-  const windowReset = (at: Date): RedemptionWindowReset => ({
-    type: 'RedemptionWindowReset',
-    data: { walletNumber, ownerId: owner, at },
+  const closed = (at: Date, windowNumber = 1): MonthlySummaryEvent => ({
+    type: 'RedemptionWindowClosed',
+    data: {
+      walletNumber,
+      ownerId: owner,
+      windowNumber,
+      closingBalance: LoyaltyPoints.ZERO,
+      redemptionCount: RedemptionLimit.ZERO,
+      hadActivity: true,
+      closedAt: at,
+    },
   });
 
   const summaryShouldBe = (
@@ -90,12 +100,7 @@ void describe('MonthlySummary projection', () => {
     given(
       eventsInStream(walletNumber, [earned(100, june), redeemed(40, june, 38)]),
     )
-      .when(
-        newEventsInStream(walletNumber, [
-          redeemed(10, june),
-          windowReset(june),
-        ]),
-      )
+      .when(newEventsInStream(walletNumber, [redeemed(10, june), closed(june)]))
       .then(
         summaryShouldBe({
           walletNumber,
