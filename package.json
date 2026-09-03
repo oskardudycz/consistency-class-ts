@@ -39,7 +39,7 @@
   "homepage": "https://github.com/oskardudycz/consistency-class-ts#readme",
   "dependencies": {
     "@event-driven-io/emmett": "0.43.0-beta.22",
-    "@event-driven-io/emmett-expressjs": "0.43.0-beta.22",
+    "@event-driven-io/emmett-expressjs": "0.43.0-beta.40",
     "@event-driven-io/emmett-sqlite": "0.43.0-beta.22"
   },
   "devDependencies": {
